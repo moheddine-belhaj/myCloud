@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,25 @@ import (
 	"github.com/moheddine-belhaj/mycloud/backend/config"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/health"
 )
+
+// version is overwritten at build time by the linker:
+//
+//	go build -ldflags "-X main.version=sha-abc1234" ./cmd/api
+//
+// -X can only set package-level string variables, which is why this is a var and not a const.
+var version = "dev"
+
+// newMux builds the router. It is separate from run so tests can exercise
+// the real routes without starting a server.
+func newMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	health.New().Register(mux) // add DB/Redis checkers here once they exist
+	mux.HandleFunc("GET /version", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"version": version})
+	})
+	return mux
+}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -37,12 +57,9 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	mux := http.NewServeMux()
-	health.New().Register(mux) // add DB/Redis checkers here once they exist
-
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           mux,
+		Handler:           newMux(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
@@ -51,7 +68,7 @@ func run() error {
 	// Buffered (size 1) so the goroutine can send and exit even if nobody reads.
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", cfg.Addr)
+		slog.Info("listening", "addr", cfg.Addr, "version", version)
 		errCh <- srv.ListenAndServe()
 	}()
 

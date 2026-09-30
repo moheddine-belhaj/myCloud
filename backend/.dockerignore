@@ -1,0 +1,10 @@
+.git
+*.md
+*_test.go
+tests/
+.gitignore
+.env
+.env.*
+*.local
+bin/
+kubeconfig*
