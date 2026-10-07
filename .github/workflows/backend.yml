@@ -68,23 +68,24 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
-  deploy:
+  deploy-dev:
     needs: build
     runs-on: ubuntu-latest
+    concurrency: gitops-write
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
         with:
           ref: main
-      - name: Bump image tag in prod overlay
-        working-directory: deploy/apps/api/overlays/prod
+      - name: Bump image tag in dev overlay
+        working-directory: deploy/apps/api/overlays/dev
         run: kustomize edit set image mycloud-api=${{ env.IMAGE }}:${{ needs.build.outputs.tag }}
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/apps/api/overlays/prod/kustomization.yaml
-          git commit -m "deploy(api): ${{ needs.build.outputs.tag }} [skip ci]" || exit 0
+          git add deploy/apps/api/overlays/dev/kustomization.yaml
+          git commit -m "deploy(api/dev): ${{ needs.build.outputs.tag }} [skip ci]" || exit 0
           git pull --rebase origin main
           git push origin HEAD:main

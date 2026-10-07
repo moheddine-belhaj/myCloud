@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: mycloud
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/moheddine-belhaj/myCloud.git
+        revision: main
+        directories:
+          - path: deploy/apps/*/overlays/*
+  template:
+    metadata:
+      # deploy/apps/<service>/overlays/<env>  →  e.g. api-dev
+      name: '{{ index .path.segments 2 }}-{{ .path.basename }}'
+    spec:
+      project: mycloud
+      source:
+        repoURL: https://github.com/moheddine-belhaj/myCloud.git
+        targetRevision: main
+        path: '{{ .path.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'mycloud-{{ .path.basename }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
