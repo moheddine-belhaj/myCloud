@@ -7,16 +7,14 @@ on:
       - "backend/**"
       - ".github/workflows/backend.yml"
   pull_request:
-    paths:
-      - "backend/**"
-      - ".github/workflows/backend.yml"
+    branches: [main]          # no paths filter: required checks must always report
 
 concurrency:
   group: backend-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/mycloud-api
+  IMAGE: ghcr.io/${{ github.repository_owner }}/${{ vars.IMAGE_NAME }}
 
 jobs:
   test:
@@ -35,8 +33,27 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
+  validate-manifests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | sudo tar xz -C /usr/local/bin kubeconform
+      - name: Render and validate every overlay
+        run: |
+          set -euo pipefail
+          for d in deploy/apps/*/overlays/*/; do
+            echo "::group::$d"
+            kustomize build "$d" | kubeconform -strict -summary -ignore-missing-schemas -
+            echo "::endgroup::"
+          done
+
   build:
-    needs: test
+    needs: [test, validate-manifests]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -68,23 +85,26 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
-  deploy:
+  deploy-dev:
     needs: build
     runs-on: ubuntu-latest
+    environment: dev
+    concurrency: gitops-write
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
           ref: main
-      - name: Bump image tag in prod overlay
-        working-directory: deploy/apps/api/overlays/prod
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+      - name: Bump image tag in dev overlay
+        working-directory: deploy/apps/api/overlays/dev
         run: kustomize edit set image mycloud-api=${{ env.IMAGE }}:${{ needs.build.outputs.tag }}
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/apps/api/overlays/prod/kustomization.yaml
-          git commit -m "deploy(api): ${{ needs.build.outputs.tag }} [skip ci]" || exit 0
+          git add deploy/apps/api/overlays/dev/kustomization.yaml
+          git commit -m "deploy(api/dev): ${{ needs.build.outputs.tag }} [skip ci]" || exit 0
           git pull --rebase origin main
           git push origin HEAD:main

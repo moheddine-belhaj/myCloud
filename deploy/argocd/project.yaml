@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mycloud
+  namespace: argocd
+spec:
+  description: MyCloud services
+  sourceRepos:
+    - https://github.com/moheddine-belhaj/myCloud.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: mycloud-*
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace

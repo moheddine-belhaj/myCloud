@@ -1,0 +1,52 @@
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Environment to promote to (qa takes dev's tag, prod takes qa's tag)
+        type: choice
+        options: [qa, prod]
+        required: true
+
+concurrency: gitops-write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    permissions:
+      contents: read
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ vars.IMAGE_NAME }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+      - name: Resolve source tag
+        id: src
+        run: |
+          case "${{ inputs.target }}" in
+            qa)   from=dev ;;
+            prod) from=qa ;;
+          esac
+          tag=$(yq '.images[] | select(.name == "mycloud-api") | .newTag' \
+                deploy/apps/api/overlays/$from/kustomization.yaml)
+          if [ -z "$tag" ] || [ "$tag" = "sha-REPLACEME" ]; then
+            echo "::error::No valid tag in $from overlay"; exit 1
+          fi
+          echo "Promoting $tag from $from to ${{ inputs.target }}"
+          echo "from=$from" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag"   >> "$GITHUB_OUTPUT"
+      - name: Bump target overlay
+        working-directory: deploy/apps/api/overlays/${{ inputs.target }}
+        run: kustomize edit set image mycloud-api=${{ env.IMAGE }}:${{ steps.src.outputs.tag }}
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/apps/api/overlays/${{ inputs.target }}/kustomization.yaml
+          git commit -m "promote(api): ${{ steps.src.outputs.tag }} ${{ steps.src.outputs.from }} → ${{ inputs.target }}" || exit 0
+          git pull --rebase origin main
+          git push origin HEAD:main
