@@ -14,15 +14,16 @@ concurrency: gitops-write
 jobs:
   promote:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.target }}   # prod requires your approval (step 6)
+    environment: ${{ inputs.target }}
     permissions:
-      contents: write
+      contents: read
     env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/mycloud-api
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ vars.IMAGE_NAME }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: main
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
       - name: Resolve source tag
         id: src
         run: |
@@ -32,6 +33,9 @@ jobs:
           esac
           tag=$(yq '.images[] | select(.name == "mycloud-api") | .newTag' \
                 deploy/apps/api/overlays/$from/kustomization.yaml)
+          if [ -z "$tag" ] || [ "$tag" = "sha-REPLACEME" ]; then
+            echo "::error::No valid tag in $from overlay"; exit 1
+          fi
           echo "Promoting $tag from $from to ${{ inputs.target }}"
           echo "from=$from" >> "$GITHUB_OUTPUT"
           echo "tag=$tag"   >> "$GITHUB_OUTPUT"
