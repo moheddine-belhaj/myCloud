@@ -39,15 +39,31 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+      - name: Fail on unencrypted secret files
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            if ! grep -q '^sops:' "$f" || ! grep -q 'ENC\[' "$f"; then
+              echo "::error file=$f::secret file is not SOPS-encrypted"
+              fail=1
+            fi
+          done < <(find deploy -path '*/secrets/*' -type f)
+          exit $fail
       - name: Install kubeconform
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
             | sudo tar xz -C /usr/local/bin kubeconform
-      - name: Render and validate every overlay
+      - name: Render and validate every overlay (without encrypted secrets)
         run: |
           set -euo pipefail
-          for d in deploy/apps/*/overlays/*/; do
-            echo "::group::$d"
+          tmp=$(mktemp -d)
+          cp -r deploy "$tmp/"
+          for k in "$tmp"/deploy/apps/*/overlays/*/kustomization.yaml; do
+            yq -i 'del(.generators)' "$k"
+          done
+          for d in "$tmp"/deploy/apps/*/overlays/*/; do
+            echo "::group::${d#$tmp/}"
             kustomize build "$d" | kubeconform -strict -summary -ignore-missing-schemas -
             echo "::endgroup::"
           done
