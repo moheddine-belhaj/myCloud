@@ -9,6 +9,6 @@ labels:
 images:
 - name: mycloud-api
   newName: ghcr.io/moheddine-belhaj/mycloud-api
-  newTag: sha-58fc018
+  newTag: sha-a25d022
 generators:
-  - secret-generator.yaml
+- secret-generator.yaml
