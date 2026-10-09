@@ -3,3 +3,10 @@ CLAUDE.md
 .claude
 .gitignore
 /docs/
+.env
+*.env
+kubeconfig*
+*.key
+*.age
+age.txt
+*token*
