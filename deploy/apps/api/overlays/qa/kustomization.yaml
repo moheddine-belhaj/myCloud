@@ -12,3 +12,11 @@ images:
   newTag: sha-a25d022
 generators:
 - secret-generator.yaml
+patches:
+- target:
+    kind: Ingress
+    name: api
+  patch: |-
+    - op: replace
+      path: /spec/rules/0/host
+      value: cloud-qa.mohedine.dev
