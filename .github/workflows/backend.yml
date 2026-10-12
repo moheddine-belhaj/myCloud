@@ -54,15 +54,13 @@ jobs:
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
             | sudo tar xz -C /usr/local/bin kubeconform
-      - name: Render and validate every overlay (without encrypted secrets)
+      - name: Render and validate every overlay and platform component (without encrypted secrets)
         run: |
           set -euo pipefail
           tmp=$(mktemp -d)
           cp -r deploy "$tmp/"
-          for k in "$tmp"/deploy/apps/*/overlays/*/kustomization.yaml; do
-            yq -i 'del(.generators)' "$k"
-          done
-          for d in "$tmp"/deploy/apps/*/overlays/*/; do
+          find "$tmp/deploy" -name kustomization.yaml -exec yq -i 'del(.generators)' {} \;
+          for d in "$tmp"/deploy/apps/*/overlays/*/ "$tmp"/deploy/platform/*/; do
             echo "::group::${d#$tmp/}"
             kustomize build "$d" | kubeconform -strict -summary -ignore-missing-schemas -
             echo "::endgroup::"
