@@ -4,15 +4,19 @@ metadata:
   name: platform
   namespace: argocd
 spec:
-  description: Shared cluster components (tunnel, later monitoring, ...)
+  description: Shared cluster components (tunnel, database operator, later monitoring)
   sourceRepos:
     - https://github.com/moheddine-belhaj/myCloud.git
+    - https://cloudnative-pg.github.io/charts
   destinations:
     - server: https://kubernetes.default.svc
       namespace: cloudflared
+    - server: https://kubernetes.default.svc
+      namespace: cnpg-system
   clusterResourceWhitelist:
-    - group: ""
-      kind: Namespace
+    # Operators install CRDs, ClusterRoles and webhooks. Only admin-owned platform apps live here.
+    - group: "*"
+      kind: "*"
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -32,3 +36,30 @@ spec:
     automated:
       prune: true
       selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-operator
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    targetRevision: 0.29.1
+    helm:
+      valuesObject:
+        resources:
+          requests: { cpu: 50m, memory: 128Mi }
+          limits: { memory: 256Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # CNPG's CRDs are too large for client-side apply
