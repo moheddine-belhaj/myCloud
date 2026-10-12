@@ -9,14 +9,14 @@ labels:
 images:
 - name: mycloud-api
   newName: ghcr.io/moheddine-belhaj/mycloud-api
-  newTag: sha-a25d022
+  newTag: sha-b5ecf0e
 generators:
 - secret-generator.yaml
 patches:
-- target:
-    kind: Ingress
-    name: api
-  patch: |-
+- patch: |-
     - op: replace
       path: /spec/rules/0/host
       value: cloud-dev.mohedine.dev
+  target:
+    kind: Ingress
+    name: api
