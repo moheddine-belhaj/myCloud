@@ -7,14 +7,16 @@ COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
+# Which binary to build: api, auth, ... 
+ARG SERVICE=api
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
-    -o /out/api ./cmd/api
+    -o /out/app ./cmd/${SERVICE}
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/api /api
+COPY --from=build /out/app /app
 # Numeric UID (distroless "nonroot" = 65532): Kubernetes' runAsNonRoot can only
 # verify a numeric user and refuses to start the pod with a named one.
 USER 65532:65532
 EXPOSE 8080
-ENTRYPOINT ["/api"]
+ENTRYPOINT ["/app"]
