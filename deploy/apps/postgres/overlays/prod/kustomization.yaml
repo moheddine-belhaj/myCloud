@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mycloud-prod
+resources:
+  - ../../base
+labels:
+  - pairs: { env: prod }
+patches:
+  - target: { kind: Cluster, name: db }
+    patch: |-
+      - op: replace
+        path: /spec/instances
+        value: 2
+      - op: replace
+        path: /spec/storage/size
+        value: 5Gi
+      - op: add
+        path: /spec/affinity/podAntiAffinityType
+        value: required
