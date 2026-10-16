@@ -34,6 +34,11 @@ spec:
           env:
             - name: ADDR
               value: ":8080"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-app      # created by CNPG
+                  key: uri          # postgresql://app:<pw>@db-rw.mycloud-<env>:5432/app
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 5
