@@ -1,0 +1,12 @@
+# auth: values shared by all environments.
+image:
+  repository: ghcr.io/moheddine-belhaj/mycloud-auth
+
+database:
+  enabled: true
+  name: auth
+  secret: auth-db
+
+ingress:
+  enabled: true
+  path: /api/auth
