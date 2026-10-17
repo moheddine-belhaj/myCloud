@@ -1,0 +1,6 @@
+# auth in qa. image.tag is written by promote.yml: don't edit by hand.
+environment: qa
+image:
+  tag: sha-REPLACEME
+ingress:
+  host: cloud-qa.mohedine.dev

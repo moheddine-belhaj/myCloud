@@ -5,3 +5,5 @@ resources:
   - ../../base
 labels:
   - pairs: { env: dev }
+generators:
+  - secret-generator.yaml

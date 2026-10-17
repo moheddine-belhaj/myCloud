@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"github.com/moheddine-belhaj/mycloud/backend/config"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/database"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/health"
+	"github.com/moheddine-belhaj/mycloud/backend/internal/httpserver"
 )
 
 // version is overwritten at build time by the linker:
@@ -37,9 +37,7 @@ func newMux(checks ...health.Checker) *http.ServeMux {
 }
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
-
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)
@@ -47,7 +45,7 @@ func main() {
 }
 
 // run holds the real startup logic and returns errors instead of calling
-// os.Exit so main can decide how to fail. This makes it easier to test.
+// os.Exit so main can decide how to fail.
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -58,15 +56,13 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// The pool connects lazily, so startup does not wait for Postgres.
+	// The pool connects lazily: startup does not wait for Postgres,
 	// /readyz reports "postgres: fail" until the database answers.
 	pool, err := database.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
-	// Deferred calls run in reverse order: this runs after srv.Shutdown has
-	// drained in-flight requests, so they can still use the database.
-	defer pool.Close()
+	defer pool.Close() // runs after the server has drained in-flight requests
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
@@ -74,28 +70,6 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-
-	// ListenAndServe blocks, so run it in a goroutine and report its result on a channel.
-	// Buffered (size 1) so the goroutine can send and exit even if nobody reads.
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("listening", "addr", cfg.Addr, "version", version)
-		errCh <- srv.ListenAndServe()
-	}()
-
-	// select waits for whichever happens first: a shutdown signal or a server failure.
-	select {
-	case err := <-errCh:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-		slog.Info("shutting down")
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-	// Shutdown stops accepting new connections and waits for in-flight requests.
-	return srv.Shutdown(shutdownCtx)
+	slog.Info("listening", "addr", cfg.Addr, "version", version)
+	return httpserver.Run(ctx, srv, cfg.ShutdownTimeout)
 }

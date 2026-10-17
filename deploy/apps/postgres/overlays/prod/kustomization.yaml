@@ -17,3 +17,5 @@ patches:
       - op: add
         path: /spec/affinity/podAntiAffinityType
         value: required
+generators:
+  - secret-generator.yaml

@@ -1,0 +1,12 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: auth
+spec:
+  cluster:
+    name: db
+  name: auth
+  login: true
+  passwordSecret:
+    name: auth-db       # kubernetes.io/basic-auth, created per env from SOPS
+  # databaseRoleReclaimPolicy defaults to "retain": deleting this object never drops the role
