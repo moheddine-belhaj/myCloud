@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Environment to promote to (qa takes dev's tag, prod takes qa's tag)
+        description: Environment to promote to (qa takes dev's versions, prod takes qa's)
         type: choice
         options: [qa, prod]
         required: true
@@ -18,35 +18,53 @@ jobs:
     permissions:
       contents: read
     env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ vars.IMAGE_NAME }}
+      IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/mycloud
+      TARGET: ${{ inputs.target }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: main
           ssh-key: ${{ secrets.DEPLOY_KEY }}
-      - name: Resolve source tag
-        id: src
+      - name: Copy every service's tag from the previous environment
+        id: promote
         run: |
-          case "${{ inputs.target }}" in
-            qa)   from=dev ;;
-            prod) from=qa ;;
-          esac
-          tag=$(yq '.images[] | select(.name == "mycloud-api") | .newTag' \
-                deploy/apps/api/overlays/$from/kustomization.yaml)
-          if [ -z "$tag" ] || [ "$tag" = "sha-REPLACEME" ]; then
-            echo "::error::No valid tag in $from overlay"; exit 1
-          fi
-          echo "Promoting $tag from $from to ${{ inputs.target }}"
+          set -euo pipefail
+          case "$TARGET" in qa) from=dev ;; prod) from=qa ;; esac
+          summary=""
+
+          check() {   # $1=service $2=tag
+            if [ -z "$2" ] || [ "$2" = "null" ] || [ "$2" = "sha-REPLACEME" ]; then
+              echo "::error::$1 has no valid tag in $from"; exit 1
+            fi
+          }
+
+          # Kustomize services
+          for k in deploy/apps/*/overlays/$from/kustomization.yaml; do
+            svc=$(echo "$k" | cut -d/ -f3)
+            tag=$(yq "(.images // [])[] | select(.name == \"mycloud-$svc\") | .newTag" "$k")
+            [ -z "$tag" ] && continue            # e.g. postgres: no image to promote
+            check "$svc" "$tag"
+            (cd "deploy/apps/$svc/overlays/$TARGET" && kustomize edit set image "mycloud-$svc=$IMAGE_PREFIX-$svc:$tag")
+            summary="$summary $svc=$tag"
+          done
+
+          # Helm services
+          for v in deploy/services/*/$from/values.yaml; do
+            svc=$(echo "$v" | cut -d/ -f3)
+            tag=$(yq '.image.tag' "$v")
+            check "$svc" "$tag"
+            yq -i ".image.tag = \"$tag\"" "deploy/services/$svc/$TARGET/values.yaml"
+            summary="$summary $svc=$tag"
+          done
+
+          echo "Promoting $from → $TARGET:$summary"
           echo "from=$from" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag"   >> "$GITHUB_OUTPUT"
-      - name: Bump target overlay
-        working-directory: deploy/apps/api/overlays/${{ inputs.target }}
-        run: kustomize edit set image mycloud-api=${{ env.IMAGE }}:${{ steps.src.outputs.tag }}
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/apps/api/overlays/${{ inputs.target }}/kustomization.yaml
-          git commit -m "promote(api): ${{ steps.src.outputs.tag }} ${{ steps.src.outputs.from }} → ${{ inputs.target }}" || exit 0
+          git add deploy/apps/*/overlays/$TARGET deploy/services/*/$TARGET
+          git commit -m "promote: ${{ steps.promote.outputs.from }} → $TARGET (${{ steps.promote.outputs.summary }} )" || exit 0
           git pull --rebase origin main
           git push origin HEAD:main

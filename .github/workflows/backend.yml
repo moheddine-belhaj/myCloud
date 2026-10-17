@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/${{ vars.IMAGE_NAME }}
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/mycloud
 
 jobs:
   test:
@@ -46,6 +46,10 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "::error::run gofmt -w on: $unformatted"; exit 1; fi
       - run: go vet ./...
       - run: go test -race ./...
 
@@ -70,7 +74,7 @@ jobs:
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
             | sudo tar xz -C /usr/local/bin kubeconform
-      - name: Render and validate every overlay and platform component (without encrypted secrets)
+      - name: Render and validate Kustomize apps and platform (without encrypted secrets)
         run: |
           set -euo pipefail
           tmp=$(mktemp -d)
@@ -81,6 +85,18 @@ jobs:
             kustomize build "$d" | kubeconform -strict -summary -ignore-missing-schemas -
             echo "::endgroup::"
           done
+      - name: Lint, render and validate Helm services
+        run: |
+          set -euo pipefail
+          for d in deploy/services/*/*/; do
+            svc=$(basename "$(dirname "$d")"); env=$(basename "$d")
+            echo "::group::$svc/$env"
+            args=(-f "deploy/services/$svc/values.yaml" -f "${d}values.yaml")
+            helm lint deploy/charts/service "${args[@]}"
+            helm template "$svc" deploy/charts/service -n "mycloud-$env" "${args[@]}" \
+              | kubeconform -strict -summary -
+            echo "::endgroup::"
+          done
 
   build:
     needs: [test, validate-manifests]
@@ -89,8 +105,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-    outputs:
-      tag: ${{ steps.vars.outputs.tag }}
+    strategy:
+      matrix:
+        service: [api, auth]      # one entry per folder in backend/cmd
     steps:
       - uses: actions/checkout@v5
       - id: vars
@@ -106,14 +123,16 @@ jobs:
           context: backend
           platforms: linux/amd64
           push: true
-          build-args: VERSION=${{ steps.vars.outputs.tag }}
+          build-args: |
+            VERSION=${{ steps.vars.outputs.tag }}
+            SERVICE=${{ matrix.service }}
           tags: |
-            ${{ env.IMAGE }}:${{ steps.vars.outputs.tag }}
-            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ steps.vars.outputs.tag }}
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   deploy-dev:
     needs: build
@@ -127,14 +146,27 @@ jobs:
         with:
           ref: main
           ssh-key: ${{ secrets.DEPLOY_KEY }}
-      - name: Bump image tag in dev overlay
-        working-directory: deploy/apps/api/overlays/dev
-        run: kustomize edit set image mycloud-api=${{ env.IMAGE }}:${{ needs.build.outputs.tag }}
+      - name: Bump image tags in dev (Kustomize + Helm services)
+        run: |
+          set -euo pipefail
+          tag="sha-${GITHUB_SHA::7}"
+          # Kustomize services: only overlays that reference a mycloud-<svc> image
+          for k in deploy/apps/*/overlays/dev/kustomization.yaml; do
+            svc=$(echo "$k" | cut -d/ -f3)
+            if yq -e "(.images // [])[] | select(.name == \"mycloud-$svc\")" "$k" >/dev/null 2>&1; then
+              (cd "$(dirname "$k")" && kustomize edit set image "mycloud-$svc=$IMAGE_PREFIX-$svc:$tag")
+            fi
+          done
+          # Helm services
+          for v in deploy/services/*/dev/values.yaml; do
+            yq -i ".image.tag = \"$tag\"" "$v"
+          done
+          git diff --stat
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/apps/api/overlays/dev/kustomization.yaml
-          git commit -m "deploy(api/dev): ${{ needs.build.outputs.tag }} [skip ci]" || exit 0
+          git add deploy/apps/*/overlays/dev deploy/services/*/dev
+          git commit -m "deploy(dev): sha-${GITHUB_SHA::7} [skip ci]" || exit 0
           git pull --rebase origin main
           git push origin HEAD:main
