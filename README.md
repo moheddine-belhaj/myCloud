@@ -64,7 +64,7 @@ flowchart LR
 ```
 myCloud/
 ├── backend/                   Go API
-│   ├── cmd/api/               entry point (main.go)
+│   ├── cmd/                   entry points: api/, auth/
 │   ├── config/                configuration from environment variables
 │   ├── internal/
 │   │   ├── health/            /healthz and /readyz probes
@@ -77,12 +77,13 @@ myCloud/
 │   ├── tests/                 integration tests
 │   └── Dockerfile
 ├── deploy/
-│   ├── apps/api/
-│   │   ├── base/              Kubernetes Deployment + Service
-│   │   └── overlays/          dev / qa / prod settings and image tags
-│   └── argocd/                Argo CD project + ApplicationSet
+│   ├── apps/                  Kustomize apps: api/, postgres/ (base + dev/qa/prod overlays)
+│   ├── charts/service/        generic Helm chart for Go services
+│   ├── services/              per-service, per-env Helm values (auth/)
+│   ├── argocd/                Argo CD install, projects, ApplicationSets
+│   └── platform/              cloudflared tunnel
 └── .github/workflows/
-    ├── backend.yml            test → build → deploy to dev
+    ├── backend.yml            test → validate manifests → build → deploy to dev
     └── promote.yml            promote an image dev → qa → prod
 ```
 
