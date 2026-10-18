@@ -10,3 +10,8 @@ database:
 ingress:
   enabled: true
   path: /api/auth
+  
+# argon2id needs ~19 MiB per hash (PR 2); allow 4 parallel hashes plus headroom.
+resources:
+  requests: { cpu: 20m, memory: 64Mi }
+  limits: { memory: 256Mi }

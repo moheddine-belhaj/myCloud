@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/moheddine-belhaj/mycloud/backend/config"
+	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/migrations"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/database"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/health"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/httpserver"
@@ -60,9 +61,14 @@ func run() error {
 	}
 	defer pool.Close()
 
+	// Apply the schema in the background: the server starts right away
+	// (liveness OK) and /readyz reports "migrations: fail" until it is done.
+	migrator := database.NewMigrator(pool, migrations.FS)
+	go migrator.RunWithRetry(ctx)
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           newMux(database.Checker{Pool: pool}),
+		Handler:           newMux(database.Checker{Pool: pool}, migrator),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
