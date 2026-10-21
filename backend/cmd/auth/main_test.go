@@ -8,7 +8,7 @@ import (
 )
 
 func TestRoutes(t *testing.T) {
-	mux := newMux()
+	mux := newMux(nil)
 	for _, path := range []string{"/healthz", "/readyz", "/api/auth/version"} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -26,7 +26,7 @@ func TestVersion(t *testing.T) {
 	t.Cleanup(func() { version = old })
 
 	rec := httptest.NewRecorder()
-	newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/auth/version", nil))
+	newMux(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/auth/version", nil))
 
 	var got map[string]string
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
