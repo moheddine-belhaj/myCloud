@@ -27,7 +27,8 @@ type ClaimInviteParams struct {
 }
 
 // Marks an invite as used. Returns no row (pgx.ErrNoRows) when the code is
-// unknown, already used or expired. Run it in the same transaction as CreateUser.
+// unknown, already used or expired. Run it in the same transaction as
+// CreateUser and SetInviteUsedBy.
 func (q *Queries) ClaimInvite(ctx context.Context, arg ClaimInviteParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, claimInvite, arg.UsedBy, arg.CodeHash)
 	var id uuid.UUID
@@ -57,4 +58,22 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Cre
 	var i CreateInviteRow
 	err := row.Scan(&i.ID, &i.ExpiresAt)
 	return i, err
+}
+
+const setInviteUsedBy = `-- name: SetInviteUsedBy :exec
+UPDATE invites
+SET used_by = $1
+WHERE id = $2
+`
+
+type SetInviteUsedByParams struct {
+	UsedBy *uuid.UUID
+	ID     uuid.UUID
+}
+
+// Links a claimed invite to the user it created. Register claims the invite
+// before inserting the user, so the user ID is only known afterwards.
+func (q *Queries) SetInviteUsedBy(ctx context.Context, arg SetInviteUsedByParams) error {
+	_, err := q.db.Exec(ctx, setInviteUsedBy, arg.UsedBy, arg.ID)
+	return err
 }
