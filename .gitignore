@@ -10,3 +10,5 @@ kubeconfig*
 *.age
 age.txt
 *token*
+!/backend/internal/auth/token/
+!/backend/internal/auth/token/*.go
