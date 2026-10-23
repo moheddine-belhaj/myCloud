@@ -26,6 +26,10 @@ spec:
     parameters:
       shared_buffers: "64MB"
       max_connections: "50"
+      # Audit: log every login (user, database, client address) and logout.
+      # Failed password attempts are always logged.
+      log_connections: "on"
+      log_disconnections: "on"
   affinity:
     enablePodAntiAffinity: true
     topologyKey: kubernetes.io/hostname
