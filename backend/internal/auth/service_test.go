@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -212,5 +213,164 @@ func TestRegisterConcurrentSameInvite(t *testing.T) {
 	}
 	if ok != 1 {
 		t.Errorf("%d registrations succeeded with one invite, want exactly 1", ok)
+	}
+}
+
+// newUser registers a user with role and returns it.
+func newUser(t *testing.T, s *Service, email, role string) User {
+	t.Helper()
+	var (
+		u   User
+		err error
+	)
+	if role == RoleAdmin {
+		u, err = s.CreateAdmin(context.Background(), email, goodPassword)
+	} else {
+		u, err = s.Register(context.Background(), newInvite(t, s), email, goodPassword)
+	}
+	if err != nil {
+		t.Fatalf("create %s %s: %v", role, email, err)
+	}
+	return u
+}
+
+func TestLogin(t *testing.T) {
+	s, pool := newTestService(t)
+	ctx := context.Background()
+	u := newUser(t, s, "mo@example.com", RoleUser)
+
+	sess, err := s.Login(ctx, " MO@example.com ", goodPassword, "Firefox")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if sess.User.ID != u.ID || len(sess.Token) != 43 {
+		t.Errorf("session = %+v, want user %s and a 43-char token", sess, u.ID)
+	}
+	if d := time.Until(sess.ExpiresAt); d < SessionTTL-time.Minute || d > SessionTTL {
+		t.Errorf("session expires in %s, want ~%s", d, SessionTTL)
+	}
+
+	// Only the hash of the token is stored, with the user agent.
+	var plain int
+	var ua string
+	if err := pool.QueryRow(ctx, "SELECT count(*) FILTER (WHERE token_hash = convert_to($1, 'UTF8')), max(user_agent) FROM sessions", sess.Token).Scan(&plain, &ua); err != nil {
+		t.Fatalf("read sessions: %v", err)
+	}
+	if plain != 0 || ua != "Firefox" {
+		t.Errorf("plain-token rows = %d, user_agent = %q; want 0, Firefox", plain, ua)
+	}
+
+	got, err := s.UserBySession(ctx, sess.Token)
+	if err != nil || got.ID != u.ID {
+		t.Errorf("UserBySession = %+v, %v; want user %s", got, err, u.ID)
+	}
+}
+
+func TestLoginFailuresLookTheSame(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	newUser(t, s, "mo@example.com", RoleUser)
+
+	for name, tc := range map[string]struct{ email, pw string }{
+		"wrong password":   {"mo@example.com", "wrong password here"},
+		"unknown email":    {"nobody@example.com", goodPassword},
+		"invalid email":    {"not-an-email", goodPassword},
+		"empty":            {"", ""},
+		"giant password":   {"mo@example.com", strings.Repeat("x", 10_000)},
+		"case of password": {"mo@example.com", strings.ToUpper(goodPassword)},
+	} {
+		if _, err := s.Login(ctx, tc.email, tc.pw, ""); !errors.Is(err, ErrInvalidCredentials) {
+			t.Errorf("%s: err = %v, want ErrInvalidCredentials", name, err)
+		}
+	}
+}
+
+func TestSessionExpiry(t *testing.T) {
+	s, pool := newTestService(t)
+	ctx := context.Background()
+	newUser(t, s, "mo@example.com", RoleUser)
+	sess, err := s.Login(ctx, "mo@example.com", goodPassword, "")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE sessions SET expires_at = now() - interval '1 second'"); err != nil {
+		t.Fatalf("expire: %v", err)
+	}
+	if _, err := s.UserBySession(ctx, sess.Token); !errors.Is(err, ErrNoSession) {
+		t.Errorf("expired session: err = %v, want ErrNoSession", err)
+	}
+	for _, tok := range []string{"", "not-a-real-token"} {
+		if _, err := s.UserBySession(ctx, tok); !errors.Is(err, ErrNoSession) {
+			t.Errorf("token %q: err = %v, want ErrNoSession", tok, err)
+		}
+	}
+}
+
+func TestLogoutEndsOnlyThatSession(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	newUser(t, s, "mo@example.com", RoleUser)
+	laptop, _ := s.Login(ctx, "mo@example.com", goodPassword, "laptop")
+	phone, _ := s.Login(ctx, "mo@example.com", goodPassword, "phone")
+
+	if err := s.Logout(ctx, laptop.Token); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	if _, err := s.UserBySession(ctx, laptop.Token); !errors.Is(err, ErrNoSession) {
+		t.Errorf("laptop after logout: err = %v, want ErrNoSession", err)
+	}
+	if _, err := s.UserBySession(ctx, phone.Token); err != nil {
+		t.Errorf("phone after laptop logout: %v, want still logged in", err)
+	}
+	// Logging out twice, or without a token, is not an error.
+	if err := s.Logout(ctx, laptop.Token); err != nil {
+		t.Errorf("second Logout: %v", err)
+	}
+	if err := s.Logout(ctx, ""); err != nil {
+		t.Errorf("Logout(\"\"): %v", err)
+	}
+}
+
+func TestDeleteExpiredSessions(t *testing.T) {
+	s, pool := newTestService(t)
+	ctx := context.Background()
+	newUser(t, s, "mo@example.com", RoleUser)
+	old, _ := s.Login(ctx, "mo@example.com", goodPassword, "")
+	current, _ := s.Login(ctx, "mo@example.com", goodPassword, "")
+	if _, err := pool.Exec(ctx, "UPDATE sessions SET expires_at = now() - interval '1 hour' WHERE token_hash = sha256(convert_to($1, 'UTF8'))", old.Token); err != nil {
+		t.Fatalf("expire: %v", err)
+	}
+
+	n, err := s.DeleteExpiredSessions(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("DeleteExpiredSessions = %d, %v; want 1, nil", n, err)
+	}
+	if _, err := s.UserBySession(ctx, current.Token); err != nil {
+		t.Errorf("valid session was deleted: %v", err)
+	}
+}
+
+func TestRunSessionCleanupStops(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.RunSessionCleanup(ctx, time.Hour)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunSessionCleanup did not stop after cancel")
+	}
+}
+
+func TestCleanUserAgent(t *testing.T) {
+	if got := cleanUserAgent(strings.Repeat("é", 300)); len([]rune(got)) != maxUserAgent {
+		t.Errorf("long UA kept %d chars, want %d", len([]rune(got)), maxUserAgent)
+	}
+	if got := cleanUserAgent("ok\xffua"); got != "okua" {
+		t.Errorf("invalid UTF-8 = %q, want okua", got)
 	}
 }

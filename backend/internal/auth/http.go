@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"time"
 
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/password"
 )
@@ -26,9 +27,12 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // Routes registers the API routes on mux.
-// POST /api/auth/invites (admin only) arrives in PR 3, together with sessions.
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/register", h.register)
+	mux.HandleFunc("POST /api/auth/login", h.login)
+	mux.HandleFunc("POST /api/auth/logout", h.logout)
+	mux.Handle("GET /api/auth/me", h.RequireSession(http.HandlerFunc(h.me)))
+	mux.Handle("POST /api/auth/invites", h.RequireSession(RequireAdmin(http.HandlerFunc(h.createInvite))))
 }
 
 type registerRequest struct {
@@ -60,6 +64,77 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_invite", "The invite code is invalid, already used or expired.")
 	case errors.Is(err, ErrEmailTaken):
 		writeError(w, http.StatusConflict, "email_taken", "An account with this email already exists.")
+	default:
+		internalError(w, r, err)
+	}
+}
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+	var req loginRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	s, err := h.svc.Login(r.Context(), req.Email, req.Password, r.UserAgent())
+	switch {
+	case err == nil:
+		setSessionCookie(w, s)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrInvalidCredentials):
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Wrong email or password.")
+	default:
+		internalError(w, r, err)
+	}
+}
+
+// logout always answers 204 and clears the cookie, even without a session.
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.Logout(r.Context(), sessionToken(r)); err != nil {
+		internalError(w, r, err)
+		return
+	}
+	clearSessionCookie(w)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFromContext(r.Context()) // RequireSession guarantees it
+	writeJSON(w, http.StatusOK, u)
+}
+
+type createInviteRequest struct {
+	ExpiresInHours *int `json:"expiresInHours"` // optional; default 168 (7 days)
+}
+
+func (h *Handler) createInvite(w http.ResponseWriter, r *http.Request) {
+	var req createInviteRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	ttl := DefaultInviteTTL
+	if req.ExpiresInHours != nil {
+		// Check the range before multiplying, so a huge number can't overflow
+		// into a valid-looking duration.
+		hours := *req.ExpiresInHours
+		if hours < 1 || hours > int(MaxInviteTTL/time.Hour) {
+			writeError(w, http.StatusBadRequest, "invalid_ttl", "expiresInHours must be between 1 and 720.")
+			return
+		}
+		ttl = time.Duration(hours) * time.Hour
+	}
+	admin, _ := UserFromContext(r.Context())
+	inv, err := h.svc.CreateInvite(r.Context(), &admin.ID, ttl)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusCreated, inv)
+	case errors.Is(err, ErrInvalidTTL):
+		writeError(w, http.StatusBadRequest, "invalid_ttl", "expiresInHours must be between 1 and 720.")
 	default:
 		internalError(w, r, err)
 	}

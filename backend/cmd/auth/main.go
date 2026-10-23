@@ -36,11 +36,16 @@ const usage = `usage:
   auth create-invite [--ttl 168h]               print a new invite code
 `
 
+// sessionCleanupEvery is how often expired sessions are deleted.
+const sessionCleanupEvery = time.Hour
+
 // newMux builds the router. Public routes live under /api/auth/, because the
 // Ingress sends that path prefix to this service. /healthz and /readyz are
 // only used by the kubelet inside the cluster. api may be nil in tests that
 // only need the probes.
-func newMux(api *auth.Handler, checks ...health.Checker) *http.ServeMux {
+//
+// Every route sits behind auth.Protect, which rejects cross-site POSTs.
+func newMux(api *auth.Handler, checks ...health.Checker) http.Handler {
 	mux := http.NewServeMux()
 	health.New(checks...).Register(mux)
 	mux.HandleFunc("GET /api/auth/version", func(w http.ResponseWriter, _ *http.Request) {
@@ -50,7 +55,7 @@ func newMux(api *auth.Handler, checks ...health.Checker) *http.ServeMux {
 	if api != nil {
 		api.Routes(mux)
 	}
-	return mux
+	return auth.Protect(mux)
 }
 
 func main() {
@@ -96,12 +101,17 @@ func serve() error {
 	}
 	defer pool.Close()
 
+	svc := auth.NewService(pool, password.NewHasher(password.DefaultParams, maxConcurrentHashes))
+
 	// Apply the schema in the background: the server starts right away
 	// (liveness OK) and /readyz reports "migrations: fail" until it is done.
+	// Session cleanup starts once the tables exist and runs until shutdown.
 	migrator := database.NewMigrator(pool, migrations.FS)
-	go migrator.RunWithRetry(ctx)
+	go func() {
+		migrator.RunWithRetry(ctx)
+		svc.RunSessionCleanup(ctx, sessionCleanupEvery)
+	}()
 
-	svc := auth.NewService(pool, password.NewHasher(password.DefaultParams, maxConcurrentHashes))
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           newMux(auth.NewHandler(svc), database.Checker{Pool: pool}, migrator),
