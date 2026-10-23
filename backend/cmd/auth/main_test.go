@@ -36,3 +36,15 @@ func TestVersion(t *testing.T) {
 		t.Errorf("body = %v, want service=auth version=sha-test123", got)
 	}
 }
+
+// The router itself is wrapped in cross-origin protection, not only the API
+// handler, so a forgotten wrapper on a new route can't open a CSRF hole.
+func TestRouterRejectsCrossSitePost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/version", nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	newMux(nil).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("cross-site POST = %d, want 403", rec.Code)
+	}
+}
