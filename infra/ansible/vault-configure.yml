@@ -1,0 +1,20 @@
+# Configures Vault itself (not the server): audit log, KV engine, policies,
+# your admin login, Kubernetes auth, and daily snapshots.
+#
+# Before running: log in on this machine (the vault CLI keeps the token in ~/.vault-token)
+#   vault login                       # first run: root token
+#   vault login -method=userpass username=<you>   # afterwards
+#
+#   ansible-playbook vault-configure.yml -K
+- name: Configure Vault through its API (runs on this machine)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - vault_config
+
+- name: Daily Raft snapshots (runs on the VPS)
+  hosts: vault
+  become: true
+  roles:
+    - vault_snapshot

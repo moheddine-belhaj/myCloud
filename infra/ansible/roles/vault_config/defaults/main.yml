@@ -1,0 +1,19 @@
+# Your personal admin login (userpass). The password is asked once, when the user is created.
+vault_config_admin_user: something
+
+# KV version 2 engine for application secrets.
+vault_config_kv_path: secret
+
+# Policies written from files/policies/<name>.hcl
+vault_config_policies: [admin, eso, snapshot]
+
+# Kubernetes auth: Vault checks ServiceAccount tokens against this API (over Tailscale).
+vault_config_k8s_host: IP_ADDRESS_OF_K3S_SERVER   # e.g.
+vault_config_k8s_context: ""            # kubectl context of the k3s cluster; "" = current
+
+# The identity External Secrets Operator logs in with (installed in step 4).
+vault_config_eso_role: eso
+vault_config_eso_sa_name: external-secrets
+vault_config_eso_sa_namespace: external-secrets
+vault_config_eso_audience: vault
+vault_config_eso_token_ttl: 3600        # seconds

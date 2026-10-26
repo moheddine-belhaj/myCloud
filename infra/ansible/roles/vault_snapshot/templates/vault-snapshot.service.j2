@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Vault Raft snapshot
+After=vault.service
+Wants=vault.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vault-snapshot

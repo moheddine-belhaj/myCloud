@@ -1,0 +1,65 @@
+# Daily, encrypted Raft snapshots on the VPS, with a token that can only take snapshots.
+
+- name: Snapshot directory (root only)
+  ansible.builtin.file:
+    path: "{{ vault_snapshot_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Does the snapshot token exist?
+  ansible.builtin.stat:
+    path: "{{ vault_snapshot_token_file }}"
+  register: vault_snapshot_token_stat
+
+# Created with YOUR login on this machine, then copied to the VPS.
+# -orphan: it has no parent, so revoking the root token later does not revoke it.
+- name: Create the snapshot token (policy "snapshot" only)
+  ansible.builtin.command: >-
+    vault token create -orphan -policy=snapshot
+    -period={{ vault_snapshot_token_period }}
+    -display-name=vault-snapshot -field=token
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  delegate_to: localhost
+  become: false
+  register: vault_snapshot_new_token
+  when: not vault_snapshot_token_stat.stat.exists
+  changed_when: true
+  no_log: true
+
+- name: Store the snapshot token (root only)
+  ansible.builtin.copy:
+    content: "{{ vault_snapshot_new_token.stdout }}"
+    dest: "{{ vault_snapshot_token_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not vault_snapshot_token_stat.stat.exists
+  no_log: true
+
+- name: Snapshot script
+  ansible.builtin.template:
+    src: vault-snapshot.sh.j2
+    dest: /usr/local/sbin/vault-snapshot
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Snapshot service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/systemd/system/{{ item }}
+    mode: "0644"
+  loop: [vault-snapshot.service, vault-snapshot.timer]
+  notify: Reload systemd
+
+- name: Apply systemd changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Timer is enabled
+  ansible.builtin.systemd_service:
+    name: vault-snapshot.timer
+    enabled: true
+    state: started
