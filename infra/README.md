@@ -73,7 +73,28 @@ The role is **idempotent**: re-running it changes nothing unless something drift
 
 ## How to apply
 
+
+
+
+
 Prerequisites on your workstation: Ansible installed, SSH access to the VPS, a sudo-capable user there, and your workstation on the same tailnet.
+
+```bash
+# Ansible (the full package includes community.general, used for the ufw module)
+sudo apt-get install -y pipx
+pipx install --include-deps ansible
+pipx ensurepath && exec $SHELL
+ansible --version
+
+# Vault CLI (same HashiCorp repository Ansible will add on the VPS)
+wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update && sudo apt-get install -y vault
+vault version
+echo 'export VAULT_ADDR=https://@IP:8200' >> ~/.bashrc && source ~/.bashrc # change the IP
+
+```
 
 ```bash
 cd infra/ansible
