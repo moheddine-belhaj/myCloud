@@ -1,0 +1,23 @@
+# Settings for the vault role. Override in inventory.yml if needed.
+
+# Public name of Vault. DNS (Cloudflare, DNS only) points it to the VPS's Tailscale IP.
+vault_fqdn: vault.mohedine.dev
+
+# Vault listens only on this interface's IPv4 address, never on the public IP.
+vault_interface: tailscale0
+
+vault_port: 8200          # API + UI
+vault_cluster_port: 8201  # Raft/cluster traffic (only used with more than one node)
+
+vault_data_dir: /opt/vault/data
+vault_tls_dir: /opt/vault/tls
+vault_audit_dir: /var/log/vault
+
+# Raft node name. Must stay the same for the life of the data directory.
+vault_node_id: vps
+
+# Let's Encrypt certificate made by certbot in step 3a.
+vault_cert_dir: "/etc/letsencrypt/live/{{ vault_fqdn }}"
+
+# How many days of audit logs to keep.
+vault_audit_retention_days: 30

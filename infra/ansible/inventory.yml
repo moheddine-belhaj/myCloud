@@ -1,0 +1,10 @@
+# Hosts Ansible manages. No secrets here: SSH keys stay in ~/.ssh,
+# the sudo password is asked at run time (-K).
+all:
+  children:
+    vault:
+      hosts:
+        vps:
+          ansible_host: VPS_PUBLIC_IP   # or the Host alias from ~/.ssh/config
+          ansible_user: VPS_USER
+          ansible_python_interpreter: /usr/bin/python3

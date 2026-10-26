@@ -1,0 +1,8 @@
+# Installs and configures the Vault server on the VPS.
+#   ansible-playbook vault.yml -K            # apply
+#   ansible-playbook vault.yml -K --check --diff   # dry run: show what would change
+- name: Vault server
+  hosts: vault
+  become: true
+  roles:
+    - vault

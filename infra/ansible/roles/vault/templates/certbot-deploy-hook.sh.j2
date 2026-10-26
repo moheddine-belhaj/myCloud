@@ -1,0 +1,17 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# certbot runs this after every successful renewal. It copies the certificate
+# to where Vault (user "vault") can read it and tells Vault to reload it.
+# Vault stays unsealed: a reload (SIGHUP) is not a restart.
+set -eu
+
+LINEAGE="${RENEWED_LINEAGE:-{{ vault_cert_dir }}}"
+[ "$LINEAGE" = "{{ vault_cert_dir }}" ] || exit 0   # another certificate: not ours
+
+install -d -m 0750 -o root -g vault "{{ vault_tls_dir }}"
+install -m 0640 -o root -g vault "$LINEAGE/fullchain.pem" "{{ vault_tls_dir }}/vault.crt"
+install -m 0640 -o root -g vault "$LINEAGE/privkey.pem"   "{{ vault_tls_dir }}/vault.key"
+
+if systemctl is-active --quiet vault; then
+  systemctl reload vault
+fi

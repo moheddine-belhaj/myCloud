@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+# Vault server configuration. Changing this file restarts Vault (it will be sealed).
+
+ui = true
+
+# Recommended with integrated (Raft) storage: Raft memory-maps its files,
+# and swap is the OS's job, not Vault's.
+disable_mlock = true
+
+storage "raft" {
+  path    = "{{ vault_data_dir }}"
+  node_id = "{{ vault_node_id }}"
+}
+
+# Only the Tailscale address: Vault is unreachable from the public internet.
+listener "tcp" {
+  address         = "{{ vault_listen_ip }}:{{ vault_port }}"
+  cluster_address = "{{ vault_listen_ip }}:{{ vault_cluster_port }}"
+  tls_cert_file   = "{{ vault_tls_dir }}/vault.crt"
+  tls_key_file    = "{{ vault_tls_dir }}/vault.key"
+  tls_min_version = "tls12"
+}
+
+api_addr     = "https://{{ vault_fqdn }}:{{ vault_port }}"
+cluster_addr = "https://{{ vault_listen_ip }}:{{ vault_cluster_port }}"
+
+log_level = "info"

@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+{{ vault_audit_dir }}/*.log {
+    daily
+    rotate {{ vault_audit_retention_days }}
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0600 vault vault
+    postrotate
+        # SIGHUP makes Vault reopen its audit log file. It stays unsealed.
+        systemctl reload vault >/dev/null 2>&1 || true
+    endscript
+}
