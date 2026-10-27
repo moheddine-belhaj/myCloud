@@ -124,9 +124,9 @@ kubectl -n mycloud-dev exec db-1 -- psql -U postgres -tc 'show log_connections' 
 
 A successful and a failed login (**laptop**):
 ```bash
-PW=$(kubectl -n mycloud-dev get secret auth-db -o jsonpath='{.data.password}' | base64 -d)
-kubectl -n mycloud-dev exec db-1 -- psql "host=localhost user=auth dbname=auth password=$PW" -c 'select 1'
-unset PW
+# password through stdin, never in the exec command line (that line is written to the k3s audit log)
+kubectl -n mycloud-dev get secret auth-db -o jsonpath='{.data.password}' | base64 -d \
+| kubectl -n mycloud-dev exec -i db-1 -- sh -c 'read -r PGPASSWORD; export PGPASSWORD; psql -h localhost -U auth -d auth -c "select 1"'
 kubectl -n mycloud-dev exec db-1 -- psql "host=localhost user=auth dbname=auth password=wrong" -c 'select 1'
 ```
 
@@ -427,4 +427,5 @@ kubectl -n default delete externalsecret vault-hello
 | ClusterSecretStore: `x509` / TLS error | Certificate expired or not reloaded: `sudo certbot renew` and check the deploy hook |
 | ClusterSecretStore: `context deadline exceeded` | Pod → VPS:8200 blocked. Re-run the pod nettest (step 3a) |
 | `secret-store` app `SyncFailed` | ESO CRDs/webhook not ready yet. It retries; check `kubectl -n argocd get app external-secrets` |
+| A password shows up in the k3s audit log | It was in a `kubectl exec` command line (the URL is logged). Pass secrets through stdin (`exec -i … sh -c 'read -r X'`) and rotate that password |
 | k3s won't start after changing the audit config | `sudo journalctl -u k3s -n 50`; remove `/etc/rancher/k3s/config.yaml.d/10-audit.yaml` and restart to roll back |

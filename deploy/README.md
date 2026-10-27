@@ -6,6 +6,7 @@ Everything Kubernetes, applied by Argo CD (nothing is applied by hand).
 - `charts/` – our generic Helm chart `service` for Go services.
 - `services/` – values files per service/env that feed the chart (e.g. `auth`).
 - `argocd/` – Argo CD install, projects and the ApplicationSets that create the apps.
-- `platform/` – shared cluster components (Cloudflare tunnel).
+- `platform/` – shared cluster components (Cloudflare tunnel, External Secrets store).
 
-Secrets live in `secrets/*.sops.yaml` files, encrypted with SOPS + age (rules in `/.sops.yaml`); only the `data`/`stringData` values are encrypted, so diffs stay readable.
+No secret values in Git. Secrets live in Vault (on the VPS); each one is described here by an `ExternalSecret`
+(Vault path + keys), and External Secrets Operator creates the Kubernetes Secret. CI fails on any `kind: Secret`.

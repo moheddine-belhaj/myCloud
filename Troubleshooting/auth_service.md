@@ -27,7 +27,7 @@ Suggested location in the repo: `deploy/services/auth/README.md`
 | Tool | Used for |
 |---|---|
 | `kubectl` | everything in the cluster |
-| `sops` + age key in `~/.config/sops/age/keys.txt` | reading encrypted secrets locally |
+| `vault` CLI, logged in (`vault login -method=userpass username=moheddine`) | reading secrets in Vault (compare hashes, don't print values) |
 | `yq` | reading YAML |
 | `helm` | rendering the chart (`sudo snap install helm --classic`) |
 | `docker` | local Postgres for tests, running sqlc |
@@ -37,61 +37,35 @@ Suggested location in the repo: `deploy/services/auth/README.md`
 
 ## M1: before committing
 
-### Encrypted `auth-db` secrets (one per environment)
+### `auth-db` from Vault (one per environment)
 
-All three files exist and are encrypted. Expect `3` per file (username, password, mac):
+The credentials live in Vault at `secret/mycloud/<env>/auth-db`. Git only has an `ExternalSecret`
+per overlay, so there is nothing to encrypt before committing.
+
+Each overlay points at its own Vault path. Expect `key: mycloud/<env>/auth-db` twice per environment:
 ```bash
-ls deploy/apps/postgres/overlays/*/secrets/auth-db.sops.yaml
-grep -c 'ENC\[' deploy/apps/postgres/overlays/*/secrets/auth-db.sops.yaml
+grep -n 'key:' deploy/apps/postgres/overlays/*/external-secret.yaml
 ```
 
-Decrypted content is correct. Expect per environment: `auth-db`, `kubernetes.io/basic-auth`,
-`true`, `auth`, `48` (the password length, so the password itself is never printed):
+No plain Secret anywhere in `deploy/` (CI runs the same check). Expect no output:
+```bash
+grep -rlE '^kind:[[:space:]]*Secret[[:space:]]*$' deploy
+```
+
+The postgres overlays render. Expect `Cluster/db`, `DatabaseRole/auth`, `Database/auth`,
+`ExternalSecret/auth-db` for each environment:
 ```bash
 for e in dev qa prod; do
-  echo "== $e"
-  sops -d deploy/apps/postgres/overlays/$e/secrets/auth-db.sops.yaml \
-  | yq '.metadata.name, .type, .metadata.labels."cnpg.io/reload", (.data.username | @base64d), (.data.password | @base64d | length)'
-done
-```
-
-Each environment has a different password. Expect three different hashes:
-```bash
-for e in dev qa prod; do
-  sops -d deploy/apps/postgres/overlays/$e/secrets/auth-db.sops.yaml | yq '.data.password' | sha256sum
-done
-```
-
-Only values are encrypted; name, type and label stay readable (no `ENC[` here):
-```bash
-yq '.metadata, .type' deploy/apps/postgres/overlays/dev/secrets/auth-db.sops.yaml
-```
-
-`generators:` appears exactly once per overlay. Expect `1` each; `2` means the block was appended twice:
-```bash
-grep -c '^generators:' deploy/apps/postgres/overlays/*/kustomization.yaml
-```
-
-The generator points to the right file. Expect `- ./secrets/auth-db.sops.yaml` three times:
-```bash
-grep -A1 '^files:' deploy/apps/postgres/overlays/*/secret-generator.yaml
-```
-
-The postgres overlays render the same way CI does it (generators removed). Expect
-`Cluster/db`, `DatabaseRole/auth`, `Database/auth`:
-```bash
-for e in dev qa prod; do
-  cp deploy/apps/postgres/overlays/$e/kustomization.yaml /tmp/orig.yaml
-  yq -i 'del(.generators)' deploy/apps/postgres/overlays/$e/kustomization.yaml
   echo "== $e"; kubectl kustomize deploy/apps/postgres/overlays/$e | yq '.kind + "/" + .metadata.name'
-  cp /tmp/orig.yaml deploy/apps/postgres/overlays/$e/kustomization.yaml
 done
 ```
 
-git will commit the secret files (not ignored):
+Vault has the values (on your PC, logged in). Expect `auth` three times and three **different** hashes:
 ```bash
-git check-ignore -v deploy/apps/postgres/overlays/*/secrets/auth-db.sops.yaml || echo "OK: not ignored"
-git status --short deploy/apps/postgres
+for e in dev qa prod; do
+  vault kv get -field=username secret/mycloud/$e/auth-db; echo
+  vault kv get -field=password secret/mycloud/$e/auth-db | sha256sum
+done
 ```
 
 ### Helm chart
@@ -141,7 +115,21 @@ kubectl -n argocd get app postgres-dev -o jsonpath='{.status.conditions}'; echo
 
 ### Database role and database (CNPG)
 
-The `auth-db` Secret exists in every environment. Expect `kubernetes.io/basic-auth  reload=true` three times:
+ESO synced `auth-db` in every environment. Expect `SecretSynced  True` three times:
+```bash
+for e in dev qa prod; do kubectl -n mycloud-$e get externalsecret auth-db; done
+```
+
+The Secret in the cluster matches Vault (hashes only). Expect `OK` three times:
+```bash
+for e in dev qa prod; do
+  a=$(vault kv get -field=password secret/mycloud/$e/auth-db | sha256sum)
+  b=$(kubectl -n mycloud-$e get secret auth-db -o jsonpath='{.data.password}' | base64 -d | sha256sum)
+  [ "$a" = "$b" ] && echo "$e OK" || echo "$e DIFFERENT"
+done
+```
+
+The `auth-db` Secret has the right type and label. Expect `kubernetes.io/basic-auth  reload=true` three times:
 ```bash
 for e in dev qa prod; do
   kubectl -n mycloud-$e get secret auth-db -o jsonpath='{.type}{"  reload="}{.metadata.labels.cnpg\.io/reload}{"\n"}'
@@ -154,12 +142,12 @@ kubectl -n mycloud-dev get databaseroles.postgresql.cnpg.io,databases.postgresql
 kubectl -n mycloud-dev exec db-1 -- psql -U postgres -c '\du auth' -c '\l auth'
 ```
 
-The password in the Secret really works (end-to-end proof). Expect `auth | auth`:
+The password in the Secret really works (end-to-end proof). Expect `auth | auth`.
+The password goes in through stdin: anything in the `exec` command line ends up in the k3s audit log.
 ```bash
-PW=$(kubectl -n mycloud-dev get secret auth-db -o jsonpath='{.data.password}' | base64 -d)
-kubectl -n mycloud-dev exec db-1 -- env PGPASSWORD="$PW" \
-  psql -h 127.0.0.1 -U auth -d auth -c 'select current_user, current_database();'
-unset PW
+kubectl -n mycloud-dev get secret auth-db -o jsonpath='{.data.password}' | base64 -d \
+| kubectl -n mycloud-dev exec -i db-1 -- sh -c 'read -r PGPASSWORD; export PGPASSWORD;
+    psql -h 127.0.0.1 -U auth -d auth -c "select current_user, current_database();"'
 ```
 
 ### The auth service
@@ -311,9 +299,11 @@ Read-only on prod (replicas only, so you can't change data by accident):
 kubectl -n mycloud-prod port-forward svc/db-ro 15433:5432
 ```
 
-Read a secret value from Git (on your PC, needs your age key):
+Use the password from Vault instead of the cluster (on your PC, logged in to Vault):
 ```bash
-sops -d deploy/apps/postgres/overlays/dev/secrets/auth-db.sops.yaml | yq '.data.password | @base64d'
+export PGPASSWORD=$(vault kv get -field=password secret/mycloud/dev/auth-db)
+psql "host=localhost port=15432 user=auth dbname=auth sslmode=require"
+unset PGPASSWORD
 ```
 
 > Never expose Postgres through the Cloudflare Tunnel or an Ingress.
@@ -325,11 +315,9 @@ sops -d deploy/apps/postgres/overlays/dev/secrets/auth-db.sops.yaml | yq '.data.
 
 | Symptom | Cause / fix |
 |---|---|
-| `grep -c 'ENC\['` shows `0` or the file is empty | The sops pipe failed. Re-create that environment's secret |
-| `generators:` count is `2` | Delete the duplicate block in the overlay's `kustomization.yaml` |
-| `sops -d` fails with `no identity matched` | Your `keys.txt` doesn't match the public key in `.sops.yaml` |
-| Argo: `failed to get the data key` | The `sops-age` secret in `argocd` doesn't match your key |
-| auth pod `CreateContainerConfigError: secret "auth-db" not found` | `postgres-<env>` hasn't synced yet, or KSOPS failed. Check `kubectl -n argocd get app postgres-dev` |
+| auth pod `CreateContainerConfigError: secret "auth-db" not found` | ESO hasn't created it yet. `kubectl -n mycloud-dev get externalsecret auth-db`, and `kubectl -n argocd get app postgres-dev` |
+| ExternalSecret `SecretSyncedError` | Vault path or key missing (`vault kv get secret/mycloud/dev/auth-db`) or the store is not `Valid` (`kubectl get clustersecretstore vault`) |
+| Password changed in Vault, nothing happens | ESO re-reads every hour. Force it: `kubectl -n mycloud-dev annotate externalsecret auth-db force-sync=$(date +%s) --overwrite`, then restart auth |
 | `password authentication failed for user "auth"` | CNPG hasn't applied the role yet: `kubectl -n mycloud-dev describe databaserole auth` |
 | `database "auth" does not exist` | `kubectl -n mycloud-dev describe database auth` (the role must exist first) |
 | Argo `auth-*`: `Unable to resolve '$values/...'` | The second source (`ref: values`) is missing in the ApplicationSet, or a path typo |

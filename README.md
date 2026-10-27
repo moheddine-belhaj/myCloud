@@ -29,7 +29,7 @@ setup, all built and run from a home lab.
 | CI | GitHub Actions |
 | Registry | GitHub Container Registry (GHCR, private) |
 | CD | Argo CD + Kustomize (GitOps) |
-| Secrets | SOPS + age |
+| Secrets | HashiCorp Vault (self-hosted on a VPS) + External Secrets Operator |
 | Networking | Cloudflare (DNS, WAF, Tunnel), Tailscale (admin access) |
 | Observability (planned) | Prometheus, Grafana, Loki, Tempo, OpenTelemetry |
 
