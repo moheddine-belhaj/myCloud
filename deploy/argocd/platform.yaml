@@ -4,15 +4,18 @@ metadata:
   name: platform
   namespace: argocd
 spec:
-  description: Shared cluster components (tunnel, database operator, later monitoring)
+  description: Shared cluster components (tunnel, database operator, secrets operator, later monitoring)
   sourceRepos:
     - https://github.com/moheddine-belhaj/myCloud.git
     - https://cloudnative-pg.github.io/charts
+    - https://charts.external-secrets.io
   destinations:
     - server: https://kubernetes.default.svc
       namespace: cloudflared
     - server: https://kubernetes.default.svc
       namespace: cnpg-system
+    - server: https://kubernetes.default.svc
+      namespace: external-secrets
   clusterResourceWhitelist:
     # Operators install CRDs, ClusterRoles and webhooks. Only admin-owned platform apps live here.
     - group: "*"
@@ -63,3 +66,66 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true   # CNPG's CRDs are too large for client-side apply
+---
+# External Secrets Operator: syncs secrets from Vault into Kubernetes Secrets.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-secrets
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://charts.external-secrets.io
+    chart: external-secrets
+    targetRevision: 2.14.0
+    helm:
+      valuesObject:
+        installCRDs: true
+        resources:
+          requests: { cpu: 20m, memory: 64Mi }
+          limits: { memory: 256Mi }
+        webhook:
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+        certController:
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-secrets
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # ESO's CRDs are too large for client-side apply
+---
+# The connection to Vault (ClusterSecretStore) and the RBAC Vault needs to verify ESO's token.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: secret-store
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/moheddine-belhaj/myCloud.git
+    targetRevision: main
+    path: deploy/platform/secret-store
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-secrets
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The ClusterSecretStore kind only exists once the external-secrets app installed its CRDs.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff: { duration: 15s, factor: 2, maxDuration: 5m }
