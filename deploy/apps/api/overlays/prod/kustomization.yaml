@@ -15,5 +15,3 @@ patches:
   target:
     kind: Deployment
     name: api
-generators:
-- secret-generator.yaml

@@ -10,8 +10,6 @@ images:
 - name: mycloud-api
   newName: ghcr.io/moheddine-belhaj/mycloud-api
   newTag: sha-f9ed4e7
-generators:
-- secret-generator.yaml
 patches:
 - patch: |-
     - op: replace

@@ -1,6 +1,6 @@
 # 0002. Initial technology stack
 
-- Status: Accepted
+- Status: Accepted (secrets: SOPS + age superseded by 0003)
 - Date: 2026-09-30
 - Phase: 0 (Platform)
 

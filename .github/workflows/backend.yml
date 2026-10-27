@@ -64,30 +64,30 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
-      - name: Fail on unencrypted secret files
-        run: |
-          set -euo pipefail
-          fail=0
-          while IFS= read -r f; do
-            if ! grep -q '^sops:' "$f" || ! grep -q 'ENC\[' "$f"; then
-              echo "::error file=$f::secret file is not SOPS-encrypted"
-              fail=1
-            fi
-          done < <(find deploy -path '*/secrets/*' -type f)
-          exit $fail
       - name: Install kubeconform
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
             | sudo tar xz -C /usr/local/bin kubeconform
-      - name: Render and validate Kustomize apps and platform (without encrypted secrets)
+      - name: No plain Secrets in Git
+        # Secret values live in Vault; Git only holds ExternalSecrets.
+        # (ExternalSecret / ClusterSecretStore don't match: the line must be exactly "kind: Secret".)
         run: |
           set -euo pipefail
-          tmp=$(mktemp -d)
-          cp -r deploy "$tmp/"
-          find "$tmp/deploy" -name kustomization.yaml -exec yq -i 'del(.generators)' {} \;
-          for d in "$tmp"/deploy/apps/*/overlays/*/ "$tmp"/deploy/platform/*/; do
-            echo "::group::${d#$tmp/}"
-            kustomize build "$d" | kubeconform -strict -summary -ignore-missing-schemas -
+          if grep -rlE --include='*.yaml' --include='*.yml' '^kind:[[:space:]]*Secret[[:space:]]*$' deploy; then
+            echo "::error::plain kind: Secret found in deploy/ (files above). Put the value in Vault and add an ExternalSecret."
+            exit 1
+          fi
+      - name: Render and validate Kustomize apps and platform
+        run: |
+          set -euo pipefail
+          for d in deploy/apps/*/overlays/*/ deploy/platform/*/; do
+            echo "::group::$d"
+            out=$(kustomize build "$d")
+            # also catches Secrets made by a secretGenerator, which the grep above can't see
+            if grep -qE '^kind:[[:space:]]*Secret[[:space:]]*$' <<<"$out"; then
+              echo "::error::$d renders a kind: Secret"; exit 1
+            fi
+            kubeconform -strict -summary -ignore-missing-schemas - <<<"$out"
             echo "::endgroup::"
           done
       - name: Lint, render and validate Helm services

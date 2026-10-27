@@ -2,7 +2,7 @@
 
 GitOps entry point: Argo CD watches this repo (`main`) and makes the cluster match it.
 
-- `install/` – installs Argo CD with SOPS support (ksops) so it can decrypt secrets.
+- `install/` – installs Argo CD (upstream manifest, pinned version, no patches).
 - `project.yaml` – AppProject `mycloud`: may only deploy to `mycloud-*` namespaces.
 - `platform.yaml` – AppProject `platform` plus the platform apps: `cloudflared` and the `cnpg-operator` (Helm chart from the CNPG repo, pinned version).
 - `applicationset.yaml` – **ApplicationSet** for Kustomize apps: one Argo app per folder `deploy/apps/<app>/overlays/<env>` (e.g. `api-dev`, `postgres-qa`).
