@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: mycloud-prod
 resources:
   - ../../base
+  - external-secret.yaml   # auth-db from Vault (was a SOPS generator)
 labels:
   - pairs: { env: prod }
 patches:
@@ -17,5 +18,3 @@ patches:
       - op: add
         path: /spec/affinity/podAntiAffinityType
         value: required
-generators:
-  - secret-generator.yaml
