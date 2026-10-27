@@ -4,5 +4,4 @@ namespace: cloudflared
 resources:
   - namespace.yaml
   - deployment.yaml
-generators:
-  - secret-generator.yaml
+  - external-secret.yaml   # tunnel token from Vault 
