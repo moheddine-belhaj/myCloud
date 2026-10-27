@@ -3,7 +3,7 @@
 Infrastructure as code for MyCloud's supporting servers. Today this folder holds one thing: an
 **Ansible** setup that installs and configures **HashiCorp Vault** on the VPS.
 
-Vault is reachable **only over Tailscale** (never on the public IP) at `https://vault.mohedine.dev:8200`.
+Vault is reachable **only over Tailscale** (never on the public IP) at `https://<VAULT_DOMAIN>:8200`.
 The name resolves (Cloudflare, DNS only) to the VPS's Tailscale IP and has a real Let's Encrypt certificate.
 
 ## Layout
@@ -37,7 +37,7 @@ infra/
 
 | File | Role |
 |------|------|
-| `defaults/main.yml` | Every setting in one place: domain (`vault.mohedine.dev`), network interface (`tailscale0`), ports (8200 API, 8201 cluster), data/TLS/audit directories, Raft node id, Let's Encrypt cert path, audit log retention (30 days). Override in `inventory.yml` if needed. |
+| `defaults/main.yml` | Every setting in one place: domain (`<VAULT_DOMAIN>`), network interface (`tailscale0`), ports (8200 API, 8201 cluster), data/TLS/audit directories, Raft node id, Let's Encrypt cert path, audit log retention (30 days). Override in `inventory.yml` if needed. |
 | `handlers/main.yml` | Actions triggered by config changes: **Reload systemd**, **Restart vault**, **Reload vault**. A *restart seals Vault* (you must unseal again); a *reload* (SIGHUP) keeps it unsealed. |
 | `tasks/main.yml` | The installation, in 7 sections (below). |
 
@@ -68,7 +68,7 @@ The role is **idempotent**: re-running it changes nothing unless something drift
 ## Not automated (do by hand)
 
 - **Tailscale** installed and up on the VPS (`sudo tailscale up`).
-- **Certbot certificate** for `vault.mohedine.dev` (step 3a), so `/etc/letsencrypt/live/vault.mohedine.dev/fullchain.pem` exists.
+- **Certbot certificate** for `<VAULT_DOMAIN>` (step 3a), so `/etc/letsencrypt/live/<VAULT_DOMAIN>/fullchain.pem` exists.
 - **`vault operator init` and `vault operator unseal`**: these print the unseal keys and root token. Store them safely, never in git. You must unseal again after every restart of the service or reboot.
 
 ## How to apply
@@ -92,7 +92,7 @@ echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://
   | sudo tee /etc/apt/sources.list.d/hashicorp.list
 sudo apt-get update && sudo apt-get install -y vault
 vault version
-echo 'export VAULT_ADDR=https://@IP:8200' >> ~/.bashrc && source ~/.bashrc # change the IP
+echo 'export VAULT_ADDR=https://<VAULT_DOMAIN>:8200' >> ~/.bashrc && source ~/.bashrc # set your Vault domain
 
 ```
 
@@ -153,7 +153,7 @@ curl -m 5 https://<VPS_PUBLIC_IP>:8200/v1/sys/health
 
 **5. Reachable over Tailscale with valid TLS** (from your workstation, on the tailnet)
 ```bash
-curl -s https://vault.mohedine.dev:8200/v1/sys/health | jq
+curl -s https://<VAULT_DOMAIN>:8200/v1/sys/health | jq
 # no certificate warning (no -k needed); fields: initialized, sealed, version
 ```
 
@@ -161,7 +161,7 @@ curl -s https://vault.mohedine.dev:8200/v1/sys/health | jq
 ```bash
 sudo ls -l /opt/vault/tls                           # vault.crt 0640, vault.key 0640 (root:vault)
 sudo certbot renew --dry-run                        # succeeds
-sudo RENEWED_LINEAGE=/etc/letsencrypt/live/vault.mohedine.dev \
+sudo RENEWED_LINEAGE=/etc/letsencrypt/live/<VAULT_DOMAIN> \
   /etc/letsencrypt/renewal-hooks/deploy/vault.sh    # runs; Vault stays unsealed
 ```
 

@@ -9,8 +9,9 @@ a **15 GB** storage quota shared across its spaces.
 The project is also a hands-on DevOps platform: Go services, Kubernetes, GitOps and a layered security
 setup, all built and run from a home lab.
 
-> **Status:** early development. The CI/CD pipeline and a minimal Go API (`/healthz`, `/readyz`,
-> `/version`) are in place. Features are added phase by phase (see [Roadmap](#roadmap)).
+> **Status:** early development. The CI/CD pipeline, a minimal Go API (`/healthz`, `/readyz`,
+> `/version`), CloudNativePG Postgres, Vault-backed secrets and the first part of the auth service
+> (invite registration, login, logout, sessions, admin invites; TOTP is next) are in place. Features are added phase by phase (see [Roadmap](#roadmap)).
 
 ## Tech stack
 
@@ -68,7 +69,7 @@ myCloud/
 │   ├── config/                configuration from environment variables
 │   ├── internal/
 │   │   ├── health/            /healthz and /readyz probes
-│   │   ├── auth/              login, 2FA, sessions        (planned)
+│   │   ├── auth/              register, login, sessions   (2FA planned)
 │   │   ├── user/              user accounts               (planned)
 │   │   ├── space/             spaces and quota            (planned)
 │   │   ├── file/              file metadata and downloads (planned)
@@ -81,7 +82,8 @@ myCloud/
 │   ├── charts/service/        generic Helm chart for Go services
 │   ├── services/              per-service, per-env Helm values (auth/)
 │   ├── argocd/                Argo CD install, projects, ApplicationSets
-│   └── platform/              cloudflared tunnel
+│   └── platform/              cloudflared tunnel, External Secrets store
+├── infra/                     Ansible: Vault on a VPS (config, snapshots)
 └── .github/workflows/
     ├── backend.yml            test → validate manifests → build → deploy to dev
     └── promote.yml            promote an image dev → qa → prod
@@ -154,8 +156,8 @@ docker run --rm -p 8080:8080 mycloud-api:local
 |---|-------|--------|
 | 0 | Platform: k3s cluster, Traefik, Cloudflare Tunnel, Tailscale | In progress |
 | 1 | GitOps: CI, GHCR, Argo CD, dev/qa/prod | In progress |
-| 2 | Data layer: PostgreSQL, Garage, Redis, NATS, backups | Planned |
-| 3 | Auth: invite registration, login, 2FA | Planned |
+| 2 | Data layer: PostgreSQL, Garage, Redis, NATS, backups | In progress |
+| 3 | Auth: invite registration, login, 2FA | In progress |
 | 4 | Spaces and quotas | Planned |
 | 5 | File upload, listing and download | Planned |
 | 6 | Processing pipeline: malware scan, thumbnails, previews | Planned |

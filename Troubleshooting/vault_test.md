@@ -151,12 +151,12 @@ The ACL lives in the Tailscale admin console; the copy in Git is `infra/tailscal
 
 DNS points to the Tailscale IP (**laptop**):
 ```bash
-dig +short vault.mohedine.dev           # 100.x.y.z (Cloudflare record: DNS only)
+dig +short <VAULT_DOMAIN>           # 100.x.y.z (Cloudflare record: DNS only)
 ```
 
 Certificate (**VPS**):
 ```bash
-sudo openssl x509 -in /etc/letsencrypt/live/vault.mohedine.dev/fullchain.pem -noout -subject -issuer -dates
+sudo openssl x509 -in /etc/letsencrypt/live/<VAULT_DOMAIN>/fullchain.pem -noout -subject -issuer -dates
 sudo certbot renew --dry-run
 systemctl list-timers | grep certbot
 ls -l /etc/letsencrypt/renewal-hooks/deploy/vault.sh
@@ -167,7 +167,7 @@ Pods on **both** nodes reach Vault (**laptop**):
 for n in cp1 worker1; do
   kubectl run nettest-$n --restart=Never --image=curlimages/curl \
     --overrides="{\"spec\":{\"nodeName\":\"$n\"}}" \
-    -- sh -c 'curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 https://vault.mohedine.dev:8200/v1/sys/health; exit 0'
+    -- sh -c 'curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 https://<VAULT_DOMAIN>:8200/v1/sys/health; exit 0'
 done
 kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/nettest-cp1 pod/nettest-worker1 --timeout=60s
 for n in cp1 worker1; do echo "$n: $(kubectl logs nettest-$n)"; done
@@ -183,7 +183,7 @@ ssh controlPlane "nc -zv -w 3 <VPS_TS_IP> 22"            # ACL: cp1 → VPS:22 b
 
 Vault → k3s API (**VPS**), needed for TokenReview:
 ```bash
-curl -sk --max-time 5 -o /dev/null -w '%{http_code}\n' https://100.92.246.101:6443/version    # 200 or 401
+curl -sk --max-time 5 -o /dev/null -w '%{http_code}\n' https://<TAILSCALE_IP>:6443/version    # 200 or 401
 ```
 
 ---
@@ -211,7 +211,7 @@ sudo ls -ld /opt/vault/data                # drwx------ vault vault
 Status and health (**laptop**):
 ```bash
 vault status                               # Initialized true, Sealed false, Storage raft
-curl -s https://vault.mohedine.dev:8200/v1/sys/health | jq    # valid TLS, no -k
+curl -s https://<VAULT_DOMAIN>:8200/v1/sys/health | jq    # valid TLS, no -k
 ```
 
 Reboot test: Vault must come back **sealed** and start after Tailscale (**laptop**):
@@ -246,7 +246,7 @@ vault secrets list                               # secret/  kv  (version 2)
 vault auth list                                  # kubernetes/  token/  userpass/
 vault policy list                                # admin  default  eso  root  snapshot
 vault policy read eso                            # read-only on secret/data/mycloud/* and platform/*
-vault read auth/kubernetes/config                # kubernetes_host https://100.92.246.101:6443
+vault read auth/kubernetes/config                # kubernetes_host https://<TAILSCALE_IP>:6443
 vault read auth/kubernetes/role/eso              # SA external-secrets/external-secrets, policies [eso], ttl 1h,
                                                  # audience https://kubernetes.default.svc.cluster.local
 ```
