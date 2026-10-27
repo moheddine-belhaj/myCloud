@@ -1,8 +1,0 @@
-# k3s drop-in config on cp1: /etc/rancher/k3s/config.yaml.d/10-audit.yaml
-# "+" appends to any kube-apiserver-arg list from other config files.
-kube-apiserver-arg+:
-  - audit-policy-file=/var/lib/rancher/k3s/server/audit.yaml
-  - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log
-  - audit-log-maxage=30     # days to keep rotated files
-  - audit-log-maxbackup=10  # rotated files to keep
-  - audit-log-maxsize=100   # MB per file before rotation

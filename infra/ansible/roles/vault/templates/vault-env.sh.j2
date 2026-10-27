@@ -1,0 +1,3 @@
+# {{ ansible_managed }}
+# vault CLI on this host talks to the local server by its real name (valid TLS).
+export VAULT_ADDR="https://{{ vault_fqdn }}:{{ vault_port }}"

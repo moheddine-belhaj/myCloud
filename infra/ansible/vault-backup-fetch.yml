@@ -1,0 +1,26 @@
+# Copies the newest Vault snapshot from the VPS to this machine.
+# Snapshots are encrypted by Vault: safe to keep here, useless without the unseal keys.
+#   ansible-playbook vault-backup-fetch.yml -K
+- name: Fetch the latest Vault snapshot
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars:
+    backup_dest: "{{ lookup('ansible.builtin.env', 'HOME') }}/backups/vault/"
+  tasks:
+    - name: Find snapshots on the VPS
+      ansible.builtin.find:
+        paths: /var/backups/vault
+        patterns: "vault-*.snap"
+      register: backup_snaps
+
+    - name: There is at least one snapshot
+      ansible.builtin.assert:
+        that: backup_snaps.files | length > 0
+        fail_msg: "No snapshot yet. Run: sudo systemctl start vault-snapshot.service (on the VPS)"
+
+    - name: Copy the newest one to {{ backup_dest }}
+      ansible.builtin.fetch:
+        src: "{{ (backup_snaps.files | sort(attribute='mtime') | last).path }}"
+        dest: "{{ backup_dest }}"
+        flat: true

@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# Drop-in for the vault.service unit shipped by the HashiCorp package.
+[Unit]
+# Vault binds to the Tailscale IP, so start after Tailscale.
+After=tailscaled.service network-online.target
+Wants=tailscaled.service network-online.target
+# Keep retrying at boot until the Tailscale IP exists (the package limits restarts otherwise).
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=5

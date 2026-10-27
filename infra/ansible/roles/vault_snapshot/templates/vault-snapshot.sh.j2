@@ -1,0 +1,19 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Saves a Raft snapshot of Vault. Run by vault-snapshot.timer once a day.
+# Snapshots are encrypted by Vault: useless without the unseal keys.
+set -eu
+
+export VAULT_ADDR="{{ vault_addr }}"
+VAULT_TOKEN="$(cat {{ vault_snapshot_token_file }})"
+export VAULT_TOKEN
+
+# The token is "periodic": it lives as long as it is renewed within its period.
+vault token renew >/dev/null
+
+file="{{ vault_snapshot_dir }}/vault-$(date -u +%Y%m%dT%H%M%SZ).snap"
+vault operator raft snapshot save "$file"
+chmod 600 "$file"
+
+find "{{ vault_snapshot_dir }}" -name 'vault-*.snap' -mtime +{{ vault_snapshot_keep_days }} -delete
+echo "snapshot saved: $file ($(stat -c %s "$file") bytes)"

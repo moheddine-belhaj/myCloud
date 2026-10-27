@@ -1,0 +1,204 @@
+# Configures Vault through its API with the vault CLI on this machine.
+# Every step reads the current state first and only writes when it differs,
+# so running the playbook again changes nothing.
+
+# --- 0. Preconditions ---------------------------------------------------------
+
+- name: Vault is reachable and unsealed
+  ansible.builtin.command: vault status -format=json
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  register: vault_config_status
+  changed_when: false
+  failed_when: >-
+    vault_config_status.rc != 0
+    or (vault_config_status.stdout | from_json).sealed
+
+- name: You are logged in (vault login)
+  ansible.builtin.command: vault token lookup -format=json
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  register: vault_config_self
+  changed_when: false
+
+- name: Show who is configuring
+  ansible.builtin.debug:
+    msg: "Logged in with policies {{ (vault_config_self.stdout | from_json).data.policies }}"
+
+# --- 1. Audit device: a log line for every request ----------------------------
+
+- name: Read audit devices
+  ansible.builtin.command: vault read -format=json sys/audit
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  register: vault_config_audit
+  changed_when: false
+  failed_when: vault_config_audit.rc not in [0, 2]   # 2 = nothing enabled yet
+
+- name: Enable the file audit device
+  ansible.builtin.command: vault audit enable file file_path=/var/log/vault/audit.log
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  when: >-
+    vault_config_audit.rc != 0
+    or 'file/' not in (vault_config_audit.stdout | from_json).data
+  changed_when: true
+
+# --- 2. KV version 2 secrets engine -------------------------------------------
+
+- name: Read secrets engines
+  ansible.builtin.command: vault read -format=json sys/mounts
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  register: vault_config_mounts
+  changed_when: false
+
+- name: Enable KV v2 at {{ vault_config_kv_path }}/
+  ansible.builtin.command: vault secrets enable -path={{ vault_config_kv_path }} -version=2 kv
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  when: (vault_config_kv_path ~ '/') not in (vault_config_mounts.stdout | from_json).data
+  changed_when: true
+
+# --- 3. Policies ----------------------------------------------------------------
+
+- name: Read current policies
+  ansible.builtin.command: vault policy read {{ item }}
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  loop: "{{ vault_config_policies }}"
+  register: vault_config_policy_now
+  changed_when: false
+  failed_when: false
+
+- name: Write policies that are missing or different
+  ansible.builtin.command: vault policy write {{ item.item }} -
+  args:
+    stdin: "{{ lookup('ansible.builtin.file', 'policies/' ~ item.item ~ '.hcl') }}"
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  loop: "{{ vault_config_policy_now.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc != 0 or (item.stdout | trim) != (lookup('ansible.builtin.file', 'policies/' ~ item.item ~ '.hcl') | trim)
+  changed_when: true
+
+# --- 4. Auth methods ------------------------------------------------------------
+
+- name: Read auth methods
+  ansible.builtin.command: vault read -format=json sys/auth
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  register: vault_config_auth
+  changed_when: false
+
+- name: Enable auth methods (userpass for you, kubernetes for the cluster)
+  ansible.builtin.command: vault auth enable {{ item }}
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  loop: [userpass, kubernetes]
+  when: (item ~ '/') not in (vault_config_auth.stdout | from_json).data
+  changed_when: true
+
+# --- 5. Your admin login ----------------------------------------------------------
+
+- name: Does the admin user exist?
+  ansible.builtin.command: vault read auth/userpass/users/{{ vault_config_admin_user }}
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  register: vault_config_admin_now
+  changed_when: false
+  failed_when: false
+
+- name: Ask for the admin password (only when creating the user)
+  ansible.builtin.pause:
+    prompt: "New Vault password for '{{ vault_config_admin_user }}' (min. 16 characters, input hidden)"
+    echo: false
+  register: vault_config_admin_pw
+  when: vault_config_admin_now.rc != 0
+  no_log: true
+
+- name: Password is long enough
+  ansible.builtin.assert:
+    that: vault_config_admin_pw.user_input | length >= 16
+    fail_msg: Use at least 16 characters.
+  when: vault_config_admin_now.rc != 0
+  no_log: true
+
+- name: Create the admin user (password read from stdin, never on the command line)
+  ansible.builtin.command: >-
+    vault write auth/userpass/users/{{ vault_config_admin_user }}
+    password=- token_policies=admin token_ttl=8h token_max_ttl=24h
+  args:
+    stdin: "{{ vault_config_admin_pw.user_input }}"
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  when: vault_config_admin_now.rc != 0
+  changed_when: true
+  no_log: true
+
+# --- 6. Kubernetes auth: ESO logs in with its own ServiceAccount ------------------
+
+- name: Read the k3s cluster CA from your kubeconfig
+  ansible.builtin.command: >-
+    kubectl config view --raw --minify
+    {{ ('--context=' ~ vault_config_k8s_context) if vault_config_k8s_context else '' }}
+    -o jsonpath={.clusters[0].cluster.certificate-authority-data}
+  register: vault_config_k8s_ca_b64
+  changed_when: false
+
+- name: Read the current Kubernetes auth config
+  ansible.builtin.command: vault read -format=json auth/kubernetes/config
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  register: vault_config_k8s_now
+  changed_when: false
+  failed_when: false
+
+# No token_reviewer_jwt: Vault uses the logging-in client's own token for the
+# TokenReview, so no long-lived token is stored anywhere. ESO's ServiceAccount
+# gets the system:auth-delegator role for that in step 4.
+- name: Configure Kubernetes auth (API address + CA)
+  ansible.builtin.command: >-
+    vault write auth/kubernetes/config
+    kubernetes_host={{ vault_config_k8s_host }}
+    kubernetes_ca_cert=-
+    disable_local_ca_jwt=true
+  args:
+    stdin: "{{ vault_config_k8s_ca_b64.stdout | b64decode }}"
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  when: >-
+    vault_config_k8s_now.rc != 0
+    or (vault_config_k8s_now.stdout | from_json).data.kubernetes_host != vault_config_k8s_host
+    or ((vault_config_k8s_now.stdout | from_json).data.kubernetes_ca_cert | trim)
+       != (vault_config_k8s_ca_b64.stdout | b64decode | trim)
+  changed_when: true
+
+- name: Read the current eso role
+  ansible.builtin.command: vault read -format=json auth/kubernetes/role/{{ vault_config_eso_role }}
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  register: vault_config_eso_now
+  changed_when: false
+  failed_when: false
+
+- name: Role for External Secrets Operator (read-only policy, 1 h tokens)
+  ansible.builtin.command: >-
+    vault write auth/kubernetes/role/{{ vault_config_eso_role }}
+    bound_service_account_names={{ vault_config_eso_sa_name }}
+    bound_service_account_namespaces={{ vault_config_eso_sa_namespace }}
+    audience={{ vault_config_eso_audience }}
+    token_policies=eso
+    token_ttl={{ vault_config_eso_token_ttl }}
+    token_max_ttl={{ vault_config_eso_token_ttl }}
+  environment:
+    VAULT_ADDR: "{{ vault_addr }}"
+  when: >-
+    vault_config_eso_now.rc != 0
+    or (vault_config_eso_now.stdout | from_json).data.bound_service_account_names != [vault_config_eso_sa_name]
+    or (vault_config_eso_now.stdout | from_json).data.bound_service_account_namespaces != [vault_config_eso_sa_namespace]
+    or (vault_config_eso_now.stdout | from_json).data.token_policies != ['eso']
+    or (vault_config_eso_now.stdout | from_json).data.token_ttl != vault_config_eso_token_ttl
+    or (vault_config_eso_now.stdout | from_json).data.audience != vault_config_eso_audience
+  changed_when: true

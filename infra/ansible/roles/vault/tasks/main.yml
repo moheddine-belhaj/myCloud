@@ -1,0 +1,182 @@
+# Vault server on the VPS: package, config, TLS, audit log rotation, firewall.
+# Initialising and unsealing are done by hand (they print the unseal keys).
+
+# --- 1. Preconditions ---------------------------------------------------------
+
+- name: Tailscale is up (Vault must bind to its IP)
+  ansible.builtin.assert:
+    that:
+      - vault_interface in ansible_facts
+      - ansible_facts[vault_interface].ipv4 is defined
+    fail_msg: "Interface {{ vault_interface }} has no IPv4. Run 'sudo tailscale up' on the VPS first."
+
+- name: Remember the Tailscale IP
+  ansible.builtin.set_fact:
+    vault_listen_ip: "{{ ansible_facts[vault_interface].ipv4.address }}"
+
+- name: Check the Let's Encrypt certificate from step 3a
+  ansible.builtin.stat:
+    path: "{{ vault_cert_dir }}/fullchain.pem"
+    checksum_algorithm: sha256
+  register: vault_le_cert
+
+- name: Certificate exists
+  ansible.builtin.assert:
+    that: vault_le_cert.stat.exists
+    fail_msg: "No certificate in {{ vault_cert_dir }}. Run the certbot step (3a) first."
+
+# --- 2. Install Vault from HashiCorp's apt repository -------------------------
+
+# A repo added by hand (the HashiCorp docs way) conflicts with the one Ansible adds:
+# apt refuses two entries for the same URL with different keys, and then
+# every apt task fails. So this must run before anything touches apt.
+- name: Remove a manually added HashiCorp repo (Ansible manages it now)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/hashicorp.list
+    - /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+- name: Helper the apt repository module needs
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Add the HashiCorp apt repository (signed with HashiCorp's key)
+  ansible.builtin.deb822_repository:
+    name: hashicorp
+    types: [deb]
+    uris: https://apt.releases.hashicorp.com
+    suites: ["{{ ansible_facts['distribution_release'] }}"]
+    components: [main]
+    signed_by: https://apt.releases.hashicorp.com/gpg
+    state: present
+
+- name: Install vault
+  ansible.builtin.apt:
+    name: vault
+    state: present
+    update_cache: true
+
+# An unplanned "apt upgrade" would restart Vault and leave it sealed.
+# Upgrade on purpose: unhold, upgrade, unseal, hold again.
+- name: Hold the vault package version
+  ansible.builtin.dpkg_selections:
+    name: vault
+    selection: hold
+
+# --- 3. Directories -----------------------------------------------------------
+
+- name: Data, TLS and audit directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: vault
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ vault_data_dir }}", owner: vault, mode: "0700" }
+    - { path: "{{ vault_tls_dir }}", owner: root, mode: "0750" }
+    - { path: "{{ vault_audit_dir }}", owner: vault, mode: "0750" }
+
+# --- 4. TLS certificate -------------------------------------------------------
+
+- name: Certbot deploy hook (copies renewed certs to Vault, reloads it)
+  ansible.builtin.template:
+    src: certbot-deploy-hook.sh.j2
+    dest: /etc/letsencrypt/renewal-hooks/deploy/vault.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check the certificate Vault currently uses
+  ansible.builtin.stat:
+    path: "{{ vault_tls_dir }}/vault.crt"
+    checksum_algorithm: sha256
+  register: vault_cert
+
+- name: Install the current certificate for Vault
+  ansible.builtin.command: /etc/letsencrypt/renewal-hooks/deploy/vault.sh
+  environment:
+    RENEWED_LINEAGE: "{{ vault_cert_dir }}"
+  when: not vault_cert.stat.exists or vault_cert.stat.checksum != vault_le_cert.stat.checksum
+  changed_when: true
+
+# --- 5. Configuration and service ----------------------------------------------
+
+- name: Vault server config (vault.hcl)
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: /etc/vault.d/vault.hcl
+    owner: root
+    group: vault
+    mode: "0640"
+  notify: Restart vault
+
+- name: Systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/vault.service.d
+    state: directory
+    mode: "0755"
+
+- name: Systemd drop-in (start after Tailscale, keep retrying)
+  ansible.builtin.template:
+    src: vault-override.conf.j2
+    dest: /etc/systemd/system/vault.service.d/override.conf
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart vault
+
+- name: Audit log rotation
+  ansible.builtin.template:
+    src: logrotate.j2
+    dest: /etc/logrotate.d/vault
+    mode: "0644"
+
+- name: VAULT_ADDR for shells on the VPS
+  ansible.builtin.template:
+    src: vault-env.sh.j2
+    dest: /etc/profile.d/vault.sh
+    mode: "0644"
+
+# --- 6. Firewall: 8200 only on the Tailscale interface ------------------------
+
+- name: Allow Vault API on tailscale0 only
+  community.general.ufw:
+    rule: allow
+    direction: in
+    interface: "{{ vault_interface }}"
+    port: "{{ vault_port | string }}"
+    proto: tcp
+    comment: vault via tailscale
+
+# --- 7. Start ------------------------------------------------------------------
+
+- name: Apply pending handlers before starting
+  ansible.builtin.meta: flush_handlers
+
+- name: Vault is enabled and running
+  ansible.builtin.systemd_service:
+    name: vault
+    enabled: true
+    state: started
+
+- name: Wait for the API (sealed is fine)
+  ansible.builtin.uri:
+    url: "https://{{ vault_fqdn }}:{{ vault_port }}/v1/sys/health?uninitcode=200&sealedcode=200"
+    status_code: 200
+  register: vault_health
+  retries: 10
+  delay: 3
+  until: vault_health.status == 200
+
+- name: Show Vault state
+  ansible.builtin.debug:
+    msg: >-
+      Vault {{ vault_health.json.version }} on {{ vault_listen_ip }}:{{ vault_port }}:
+      initialized={{ vault_health.json.initialized }},
+      sealed={{ vault_health.json.sealed }}
