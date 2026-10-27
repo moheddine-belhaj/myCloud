@@ -8,5 +8,4 @@ spec:
   name: auth
   login: true
   passwordSecret:
-    name: auth-db       # kubernetes.io/basic-auth, created per env from SOPS
-  # databaseRoleReclaimPolicy defaults to "retain": deleting this object never drops the role
+    name: auth-db       # kubernetes.io/basic-auth per env: from Vault via ExternalSecret

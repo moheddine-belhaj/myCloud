@@ -3,7 +3,6 @@ kind: Kustomization
 namespace: mycloud-dev
 resources:
   - ../../base
+  - external-secret.yaml   # auth-db from Vault (was a SOPS generator)
 labels:
   - pairs: { env: dev }
-generators:
-  - secret-generator.yaml
