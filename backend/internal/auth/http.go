@@ -33,6 +33,9 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/logout", h.logout)
 	mux.Handle("GET /api/auth/me", h.RequireSession(http.HandlerFunc(h.me)))
 	mux.Handle("POST /api/auth/invites", h.RequireSession(RequireAdmin(http.HandlerFunc(h.createInvite))))
+	mux.Handle("POST /api/auth/2fa/setup", h.RequireSession(http.HandlerFunc(h.totpSetup)))
+	mux.Handle("POST /api/auth/2fa/enable", h.RequireSession(http.HandlerFunc(h.totpEnable)))
+	mux.Handle("POST /api/auth/2fa/disable", h.RequireSession(http.HandlerFunc(h.totpDisable)))
 }
 
 type registerRequest struct {
@@ -135,6 +138,82 @@ func (h *Handler) createInvite(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, inv)
 	case errors.Is(err, ErrInvalidTTL):
 		writeError(w, http.StatusBadRequest, "invalid_ttl", "expiresInHours must be between 1 and 720.")
+	default:
+		internalError(w, r, err)
+	}
+}
+
+// totpSetup starts 2FA setup. The body is an empty JSON object: {}.
+func (h *Handler) totpSetup(w http.ResponseWriter, r *http.Request) {
+	var req struct{}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	u, _ := UserFromContext(r.Context())
+	setup, err := h.svc.SetupTOTP(r.Context(), u)
+	if err != nil {
+		writeTOTPError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, setup) // writeJSON sets Cache-Control: no-store
+}
+
+type totpEnableRequest struct {
+	Code string `json:"code"`
+}
+
+type totpEnableResponse struct {
+	RecoveryCodes []string `json:"recoveryCodes"`
+}
+
+func (h *Handler) totpEnable(w http.ResponseWriter, r *http.Request) {
+	var req totpEnableRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	u, _ := UserFromContext(r.Context())
+	codes, err := h.svc.EnableTOTP(r.Context(), u, req.Code, sessionToken(r))
+	if err != nil {
+		writeTOTPError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, totpEnableResponse{RecoveryCodes: codes})
+}
+
+type totpDisableRequest struct {
+	Password string `json:"password"`
+	Code     string `json:"code"`
+}
+
+func (h *Handler) totpDisable(w http.ResponseWriter, r *http.Request) {
+	var req totpDisableRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	u, _ := UserFromContext(r.Context())
+	if err := h.svc.DisableTOTP(r.Context(), u, req.Password, req.Code); err != nil {
+		writeTOTPError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeTOTPError maps the 2FA errors to responses.
+func writeTOTPError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrInvalidCode):
+		writeError(w, http.StatusBadRequest, "invalid_code", "The code is wrong, expired or already used.")
+	case errors.Is(err, ErrWrongPassword):
+		writeError(w, http.StatusForbidden, "wrong_password", "The password is wrong.")
+	case errors.Is(err, ErrTOTPAlreadyEnabled):
+		writeError(w, http.StatusConflict, "totp_already_enabled", "Two-factor authentication is already on.")
+	case errors.Is(err, ErrTOTPNotSetUp):
+		writeError(w, http.StatusConflict, "totp_not_set_up", "Start two-factor setup first.")
+	case errors.Is(err, ErrTOTPNotEnabled):
+		writeError(w, http.StatusConflict, "totp_not_enabled", "Two-factor authentication is not on.")
+	case errors.Is(err, ErrTOTPUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "totp_unavailable", "Two-factor authentication is not available.")
 	default:
 		internalError(w, r, err)
 	}

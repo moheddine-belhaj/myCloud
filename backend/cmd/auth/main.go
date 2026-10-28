@@ -126,7 +126,8 @@ func serve() error {
 	}
 	defer pool.Close()
 
-	svc := auth.NewService(pool, password.NewHasher(password.DefaultParams, maxConcurrentHashes))
+	svc := auth.NewService(pool, password.NewHasher(password.DefaultParams, maxConcurrentHashes)).
+		WithTOTP(totpKeys, os.Getenv("TOTP_ISSUER"))
 
 	// Apply the schema in the background: the server starts right away
 	// (liveness OK) and /readyz reports "migrations: fail" until it is done.

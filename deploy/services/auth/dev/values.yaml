@@ -4,3 +4,5 @@ image:
   tag: sha-52ed701
 ingress:
   host: cloud-dev.mohedine.dev
+env:
+  TOTP_ISSUER: "MyCloud dev"   # account title in authenticator apps

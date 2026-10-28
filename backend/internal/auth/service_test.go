@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/keyring"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/migrations"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/password"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/database"
@@ -26,7 +28,11 @@ func newTestService(t *testing.T) (*Service, *pgxpool.Pool) {
 		t.Fatalf("migrate: %v", err)
 	}
 	cheap := password.Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32}
-	return NewService(pool, password.NewHasher(cheap, 4)), pool
+	keys, err := keyring.New(1, bytes.Repeat([]byte{7}, keyring.KeySize))
+	if err != nil {
+		t.Fatalf("keyring: %v", err)
+	}
+	return NewService(pool, password.NewHasher(cheap, 4)).WithTOTP(keys, "MyCloud test"), pool
 }
 
 func newInvite(t *testing.T, s *Service) string {
