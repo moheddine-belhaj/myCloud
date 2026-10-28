@@ -18,6 +18,7 @@ Suggested location in the repo: `deploy/services/auth/README.md`
 - [M2 PR 1: schema & migrations (local)](#m2-pr-1-schema--migrations-local)
 - [M2 PR 1: in the cluster](#m2-pr-1-in-the-cluster)
 - [M3 PR 1: TOTP encryption key](#m3-pr-1-totp-encryption-key)
+- [M3 PR 2: 2FA setup, enable, disable](#m3-pr-2-2fa-setup-enable-disable)
 - [Connect to the database by hand](#connect-to-the-database-by-hand)
 - [Troubleshooting](#troubleshooting)
 
@@ -221,6 +222,8 @@ go test -v ./internal/auth/migrations/
 Expect `{"status":"ok","checks":{"migrations":"ok","postgres":"ok"}}` and a log line
 `"migration applied","version":1,"file":"00001_init.sql"`:
 ```bash
+# since M3 auth needs TOTP_KEY too; any random 32-byte key is fine locally
+export TOTP_KEY=$(openssl rand -base64 32)
 DATABASE_URL="$TEST_DATABASE_URL" go run ./cmd/auth &
 sleep 3; curl -s localhost:8080/readyz; echo
 ```
@@ -306,6 +309,52 @@ kubectl -n mycloud-dev logs deploy/auth | grep listening
 
 ---
 
+## M3 PR 2: 2FA setup, enable, disable
+
+Unit and database tests (laptop, `backend/`, with `TEST_DATABASE_URL` set). The 2FA tests must **run**, not skip:
+```bash
+go test -race ./internal/auth/totp ./internal/auth
+go test -v -run 'TOTP|Recovery' ./internal/auth | grep -E '^(--- |ok)'
+```
+
+The migration ran in the cluster. Expect `user_totp` and `recovery_codes`:
+```bash
+kubectl -n mycloud-dev logs deploy/auth | grep 00002_totp
+kubectl -n mycloud-dev exec db-1 -- psql -U postgres -d auth -c '\dt'
+```
+
+End to end against dev, through a port-forward. `oathtool` plays the authenticator app
+(`sudo apt install oathtool`); you can also scan the URI with a real app instead.
+```bash
+kubectl -n mycloud-dev port-forward svc/auth 8082:80 &
+B=http://localhost:8082; J='Content-Type: application/json'
+read -rp 'email: ' EMAIL; read -rsp 'password: ' PW; echo
+TOK=$(curl -si $B/api/auth/login -H "$J" -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}" \
+      | sed -n 's/^set-cookie: __Host-session=\([^;]*\).*/\1/ip')
+C="Cookie: __Host-session=$TOK"
+
+SECRET=$(curl -s -X POST $B/api/auth/2fa/setup -H "$J" -H "$C" -d '{}' | jq -r .secret)
+curl -s $B/api/auth/2fa/enable -H "$J" -H "$C" -d "{\"code\":\"$(oathtool --totp -b $SECRET)\"}" | jq   # 10 recovery codes
+curl -s $B/api/auth/me -H "$C" | jq .totpEnabled                                                    # true
+
+sleep 31   # a code works only once: wait for the next one
+curl -s -o /dev/null -w '%{http_code}\n' $B/api/auth/2fa/disable -H "$J" -H "$C" \
+  -d "{\"password\":\"$PW\",\"code\":\"$(oathtool --totp -b $SECRET)\"}"                        # 204
+unset PW TOK SECRET C; kill %1
+```
+
+The database only holds ciphertext. While 2FA is on, `secret_enc` starts with `\x0101` (format 1, key 1)
+and is 50 bytes (2 + 12 nonce + 20 secret + 16 tag):
+```bash
+kubectl -n mycloud-dev exec db-1 -- psql -U postgres -d auth -c \
+  "SELECT left(encode(secret_enc,'hex'),4) AS header, length(secret_enc), enabled_at IS NOT NULL AS enabled FROM user_totp"
+```
+
+Expected errors: wrong code `400 invalid_code`, same code twice `400 invalid_code`, wrong password on disable
+`403 wrong_password`, setup while on `409 totp_already_enabled`, enable without setup `409 totp_not_set_up`.
+
+---
+
 ## Connect to the database by hand
 
 **SQL shell inside the database pod** (superuser, no password; on prod use the primary,
@@ -360,6 +409,8 @@ unset PGPASSWORD
 | Symptom | Cause / fix |
 |---|---|
 | auth pod `CreateContainerConfigError: secret "auth-db" not found` | ESO hasn't created it yet. `kubectl -n mycloud-dev get externalsecret auth-db`, and `kubectl -n argocd get app postgres-dev` |
+| Every 2FA code is `invalid_code` | Clock drift: codes are accepted ±30 s. Check the phone's time and `timedatectl` on the nodes |
+| 2FA request returns 500, log says `open totp secret` | The row was sealed with another key: `auth-totp` in Vault was changed. Restore the old key, or reset that user's 2FA |
 | auth exits at start: `TOTP_KEY is required` / `must be 32 bytes` | Secret `auth-totp` missing or wrong. Check `vault kv get secret/mycloud/<env>/auth-totp` and `kubectl -n mycloud-<env> get externalsecret auth-totp` |
 | `auth-*` app stuck in sync on wave -1 | ESO can't read the Vault path (written before the merge?). `kubectl -n mycloud-<env> describe externalsecret auth-totp` |
 | ExternalSecret `SecretSyncedError` | Vault path or key missing (`vault kv get secret/mycloud/dev/auth-db`) or the store is not `Valid` (`kubectl get clustersecretstore vault`) |

@@ -47,6 +47,26 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteOtherSessions = `-- name: DeleteOtherSessions :execrows
+DELETE FROM sessions
+WHERE user_id = $1
+  AND token_hash <> $2
+`
+
+type DeleteOtherSessionsParams struct {
+	UserID        uuid.UUID
+	KeepTokenHash []byte
+}
+
+// Ends every session of a user except the one making the request.
+func (q *Queries) DeleteOtherSessions(ctx context.Context, arg DeleteOtherSessionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOtherSessions, arg.UserID, arg.KeepTokenHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM sessions
 WHERE token_hash = $1
@@ -58,9 +78,11 @@ func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) error {
 }
 
 const getSessionUser = `-- name: GetSessionUser :one
-SELECT u.id, u.email, u.role, u.created_at, s.expires_at AS session_expires_at
+SELECT u.id, u.email, u.role, u.created_at, s.expires_at AS session_expires_at,
+       (t.enabled_at IS NOT NULL)::boolean AS totp_enabled
 FROM sessions s
 JOIN users u ON u.id = s.user_id
+LEFT JOIN user_totp t ON t.user_id = u.id
 WHERE s.token_hash = $1
   AND s.expires_at > now()
 `
@@ -71,9 +93,10 @@ type GetSessionUserRow struct {
 	Role             string
 	CreatedAt        pgtype.Timestamptz
 	SessionExpiresAt pgtype.Timestamptz
+	TotpEnabled      bool
 }
 
-// Returns the user behind a valid (not expired) session.
+// Returns the user behind a valid (not expired) session, and whether 2FA is on.
 func (q *Queries) GetSessionUser(ctx context.Context, tokenHash []byte) (GetSessionUserRow, error) {
 	row := q.db.QueryRow(ctx, getSessionUser, tokenHash)
 	var i GetSessionUserRow
@@ -83,6 +106,7 @@ func (q *Queries) GetSessionUser(ctx context.Context, tokenHash []byte) (GetSess
 		&i.Role,
 		&i.CreatedAt,
 		&i.SessionExpiresAt,
+		&i.TotpEnabled,
 	)
 	return i, err
 }

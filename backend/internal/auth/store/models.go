@@ -19,6 +19,14 @@ type Invite struct {
 	UsedBy    *uuid.UUID
 }
 
+type RecoveryCode struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	CodeHash  []byte
+	CreatedAt pgtype.Timestamptz
+	UsedAt    pgtype.Timestamptz
+}
+
 type Session struct {
 	ID        uuid.UUID
 	TokenHash []byte
@@ -34,4 +42,12 @@ type User struct {
 	PasswordHash string
 	Role         string
 	CreatedAt    pgtype.Timestamptz
+}
+
+type UserTotp struct {
+	UserID    uuid.UUID
+	SecretEnc []byte
+	CreatedAt pgtype.Timestamptz
+	EnabledAt pgtype.Timestamptz
+	LastStep  int64
 }

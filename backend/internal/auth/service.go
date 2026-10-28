@@ -1,5 +1,5 @@
 // Package auth is the business logic of the auth service: invites,
-// registration, login and sessions.
+// registration, login, sessions and two-factor authentication.
 //
 // It knows nothing about HTTP; http.go translates requests into calls to
 // Service and its errors into status codes. The CLI in cmd/auth uses the same
@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/keyring"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/password"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/store"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/token"
@@ -68,6 +69,8 @@ type User struct {
 	Email     string    `json:"email"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"createdAt"`
+	// TOTPEnabled is set by UserBySession (so /me shows it); false elsewhere.
+	TOTPEnabled bool `json:"totpEnabled"`
 }
 
 // Invite is a newly created invite. Code is shown once and never stored.
@@ -92,6 +95,11 @@ type Service struct {
 	// dummyHash is verified against when a login email doesn't exist, so
 	// that answer takes as long as a wrong password. Made once.
 	dummyHash func() (string, error)
+
+	// Two-factor authentication, set by WithTOTP (twofactor.go).
+	totpKeys   *keyring.Keyring
+	totpIssuer string
+	now        func() time.Time // the clock TOTP codes are checked against; tests replace it
 }
 
 // NewService returns a Service using pool for storage and hasher for passwords.
@@ -100,6 +108,7 @@ func NewService(pool *pgxpool.Pool, hasher *password.Hasher) *Service {
 		pool:   pool,
 		q:      store.New(pool),
 		hasher: hasher,
+		now:    time.Now,
 		dummyHash: sync.OnceValues(func() (string, error) {
 			return hasher.Hash(context.Background(), token.New())
 		}),
@@ -292,7 +301,7 @@ func (s *Service) UserBySession(ctx context.Context, tok string) (User, error) {
 	if err != nil {
 		return User{}, fmt.Errorf("get session: %w", err)
 	}
-	return User{ID: row.ID, Email: row.Email, Role: row.Role, CreatedAt: row.CreatedAt.Time}, nil
+	return User{ID: row.ID, Email: row.Email, Role: row.Role, CreatedAt: row.CreatedAt.Time, TOTPEnabled: row.TotpEnabled}, nil
 }
 
 // Logout deletes the session behind tok. Unknown or empty tokens are not an

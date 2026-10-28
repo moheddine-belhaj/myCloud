@@ -12,3 +12,8 @@ WHERE email = @email;
 SELECT id, email, role, created_at
 FROM users
 WHERE id = @id;
+
+-- name: GetPasswordHash :one
+SELECT password_hash
+FROM users
+WHERE id = @id;
