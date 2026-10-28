@@ -1,6 +1,6 @@
 # auth in dev. image.tag is written by CI (dev) / promote.yml (qa, prod): don't edit by hand.
 environment: dev
 image:
-  tag: sha-73a0c64
+  tag: sha-52ed701
 ingress:
   host: cloud-dev.mohedine.dev
