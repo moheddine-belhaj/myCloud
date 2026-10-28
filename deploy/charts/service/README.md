@@ -12,6 +12,7 @@ Instead of copying Deployment/Service/Ingress YAML per service, a service is jus
   - `deployment.yaml` – pods, probes (`/healthz`, `/readyz`), resources, hardened security context.
   - `service.yaml` – ClusterIP Service in front of the pods.
   - `ingress.yaml` – Traefik Ingress, rendered only when `ingress.enabled: true`.
+  - `externalsecret.yaml` – one `ExternalSecret` per `externalSecrets` entry: ESO copies a Vault path into a Secret (sync wave -1, so it exists before the pods start).
 
 ## Templating concepts used
 
@@ -20,6 +21,7 @@ Instead of copying Deployment/Service/Ingress YAML per service, a service is jus
 - **`required`**: fails the render with a clear message if a mandatory value (image tag, environment) is missing.
 - **`toYaml`**: copies a whole values block (`resources`, `securityContext`) into the manifest.
 - **Release name = service name**: Argo CD sets `releaseName` to the service folder name, so `auth` becomes the Deployment, Service and label name.
+- **Secrets from Vault**: `externalSecrets` lists Vault paths (rendered with `tpl`, so `{{ .Values.environment }}` works); `secretEnv` maps env vars to Secret keys. Values never appear in Git.
 - **Conditional database wiring**: with `database.enabled: true` the Deployment reads user/password from a Secret and builds `DATABASE_URL` using Kubernetes `$(VAR)` expansion.
 
 ## Layered values (last wins)

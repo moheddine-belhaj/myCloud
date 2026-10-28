@@ -14,6 +14,17 @@ port: 8080
 # Plain, non-secret environment variables: { NAME: value }
 env: {}
 
+# Environment variables read from a Secret: { NAME: { secret: <Secret name>, key: <key> } }
+secretEnv: {}
+
+# Secrets synced from Vault by External Secrets Operator (ClusterSecretStore "vault").
+# vaultPath is relative to the KV mount "secret/" and may use {{ .Values.environment }}.
+# Each key is copied 1:1 from the Vault entry into the Secret.
+externalSecrets: []
+#  - name: auth-totp
+#    vaultPath: "mycloud/{{ .Values.environment }}/auth-totp"
+#    keys: [key]
+
 # Postgres connection. The Secret must be of type kubernetes.io/basic-auth
 # (keys: username, password) and live in the same namespace.
 database:

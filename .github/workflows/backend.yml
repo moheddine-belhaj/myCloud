@@ -98,8 +98,12 @@ jobs:
             echo "::group::$svc/$env"
             args=(-f "deploy/services/$svc/values.yaml" -f "${d}values.yaml")
             helm lint deploy/charts/service "${args[@]}"
-            helm template "$svc" deploy/charts/service -n "mycloud-$env" "${args[@]}" \
-              | kubeconform -strict -summary -
+            out=$(helm template "$svc" deploy/charts/service -n "mycloud-$env" "${args[@]}")
+            if grep -qE '^kind:[[:space:]]*Secret[[:space:]]*$' <<<"$out"; then
+              echo "::error::$svc/$env renders a kind: Secret"; exit 1
+            fi
+            # ExternalSecret is a CRD without a built-in schema: skipped, not failed.
+            kubeconform -strict -summary -ignore-missing-schemas - <<<"$out"
             echo "::endgroup::"
           done
 

@@ -5,6 +5,6 @@ Private code, split by responsibility. Go forbids importing `internal/` from out
 - `health/` – `/healthz` (liveness) and `/readyz` (readiness, runs registered `Checker`s).
 - `database/` – pgx pool, health check and the goose `Migrator`.
 - `httpserver/` – runs an `http.Server` with graceful shutdown.
-- `auth/` – auth service data layer: migrations, SQL queries, sqlc-generated `store/`.
+- `auth/` – auth service: HTTP handlers, business logic (register, login, sessions, invites), plus migrations, SQL queries, sqlc-generated `store/`, `password/` (argon2id) and `token/`.
 - `testdb/` – helper giving each test its own throwaway Postgres database.
 - `user/`, `space/`, `file/`, `storage/` – placeholders for upcoming phases (`.gitkeep`).

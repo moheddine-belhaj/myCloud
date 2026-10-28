@@ -10,6 +10,14 @@ database:
 ingress:
   enabled: true
   path: /api/auth
+
+# M3: AES-256 key that encrypts TOTP seeds, from Vault (secret/mycloud/<env>/auth-totp, key "key").
+externalSecrets:
+  - name: auth-totp
+    vaultPath: "mycloud/{{ .Values.environment }}/auth-totp"
+    keys: [key]
+secretEnv:
+  TOTP_KEY: { secret: auth-totp, key: key }
   
 # argon2id needs ~19 MiB per hash (PR 2); allow 4 parallel hashes plus headroom.
 resources:

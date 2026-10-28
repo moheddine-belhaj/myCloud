@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/moheddine-belhaj/mycloud/backend/config"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth"
+	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/keyring"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/migrations"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/password"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/database"
@@ -38,6 +40,25 @@ const usage = `usage:
 
 // sessionCleanupEvery is how often expired sessions are deleted.
 const sessionCleanupEvery = time.Hour
+
+// totpKeyID names the key in TOTP_KEY. A future key rotation adds key 2 and
+// keeps key 1 for opening older rows.
+const totpKeyID = 1
+
+// loadTOTPKeys reads the AES-256 key that encrypts TOTP seeds (base64 in
+// TOTP_KEY, synced from Vault). The service refuses to start without a valid
+// key: running without one would break 2FA silently.
+func loadTOTPKeys(getenv func(string) string) (*keyring.Keyring, error) {
+	v := getenv("TOTP_KEY")
+	if v == "" {
+		return nil, errors.New("TOTP_KEY is required")
+	}
+	kr, err := keyring.Parse(totpKeyID, v)
+	if err != nil {
+		return nil, fmt.Errorf("TOTP_KEY: %w", err)
+	}
+	return kr, nil
+}
 
 // newMux builds the router. Public routes live under /api/auth/, because the
 // Ingress sends that path prefix to this service. /healthz and /readyz are
@@ -91,6 +112,10 @@ func serve() error {
 	if err != nil {
 		return err
 	}
+	totpKeys, err := loadTOTPKeys(os.Getenv)
+	if err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -120,6 +145,7 @@ func serve() error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	slog.Info("listening", "addr", cfg.Addr, "version", version)
+	// Only the key ID is logged, never the key.
+	slog.Info("listening", "addr", cfg.Addr, "version", version, "totp_key_id", totpKeys.CurrentID())
 	return httpserver.Run(ctx, srv, cfg.ShutdownTimeout)
 }

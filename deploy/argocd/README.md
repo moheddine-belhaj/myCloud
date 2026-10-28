@@ -4,7 +4,7 @@ GitOps entry point: Argo CD watches this repo (`main`) and makes the cluster mat
 
 - `install/` – installs Argo CD (upstream manifest, pinned version, no patches).
 - `project.yaml` – AppProject `mycloud`: may only deploy to `mycloud-*` namespaces.
-- `platform.yaml` – AppProject `platform` plus the platform apps: `cloudflared` and the `cnpg-operator` (Helm chart from the CNPG repo, pinned version).
+- `platform.yaml` – AppProject `platform` plus the platform apps: `cloudflared`, the `cnpg-operator` and `external-secrets` (Helm charts, pinned versions) and `secret-store` (the Vault ClusterSecretStore).
 - `applicationset.yaml` – **ApplicationSet** for Kustomize apps: one Argo app per folder `deploy/apps/<app>/overlays/<env>` (e.g. `api-dev`, `postgres-qa`).
 - `applicationset-services.yaml` – ApplicationSet for Helm services: one app per `deploy/services/<svc>/<env>`, using the shared chart `charts/service` with two layered values files (*multi-source* app, the second source is only a `$values` reference).
 

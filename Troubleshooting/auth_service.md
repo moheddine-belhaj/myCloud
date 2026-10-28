@@ -17,6 +17,7 @@ Suggested location in the repo: `deploy/services/auth/README.md`
 - [M1: in the cluster](#m1-in-the-cluster)
 - [M2 PR 1: schema & migrations (local)](#m2-pr-1-schema--migrations-local)
 - [M2 PR 1: in the cluster](#m2-pr-1-in-the-cluster)
+- [M3 PR 1: TOTP encryption key](#m3-pr-1-totp-encryption-key)
 - [Connect to the database by hand](#connect-to-the-database-by-hand)
 - [Troubleshooting](#troubleshooting)
 
@@ -262,6 +263,49 @@ kill %1
 
 ---
 
+## M3 PR 1: TOTP encryption key
+
+Unit tests (laptop):
+```bash
+cd backend && go test -race ./internal/auth/keyring ./cmd/auth
+```
+
+The chart renders an `ExternalSecret` and the `TOTP_KEY` env var. Expect `ExternalSecret/auth-totp`
+with `key: mycloud/dev/auth-totp`, and `TOTP_KEY` reading Secret `auth-totp`:
+```bash
+helm template auth deploy/charts/service -n mycloud-dev \
+  -f deploy/services/auth/values.yaml -f deploy/services/auth/dev/values.yaml \
+  | yq 'select(.kind == "ExternalSecret") | .metadata.name, .spec.data[0].remoteRef.key'
+helm template auth deploy/charts/service -n mycloud-dev \
+  -f deploy/services/auth/values.yaml -f deploy/services/auth/dev/values.yaml \
+  | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "TOTP_KEY")'
+```
+
+Vault has one key per environment, 32 bytes each. Expect `32` three times and three different hashes:
+```bash
+for e in dev qa prod; do
+  vault kv get -field=key secret/mycloud/$e/auth-totp | base64 -d | wc -c
+  vault kv get -field=key secret/mycloud/$e/auth-totp | sha256sum
+done
+```
+
+In the cluster: synced, and equal to Vault. Expect `SecretSynced True` and `OK` three times:
+```bash
+for e in dev qa prod; do
+  kubectl -n mycloud-$e get externalsecret auth-totp
+  a=$(vault kv get -field=key secret/mycloud/$e/auth-totp | sha256sum)
+  b=$(kubectl -n mycloud-$e get secret auth-totp -o jsonpath='{.data.key}' | base64 -d | sha256sum)
+  [ "$a" = "$b" ] && echo "$e OK" || echo "$e DIFFERENT"
+done
+```
+
+auth started with the key. Expect `"totp_key_id":1` in the start-up log:
+```bash
+kubectl -n mycloud-dev logs deploy/auth | grep listening
+```
+
+---
+
 ## Connect to the database by hand
 
 **SQL shell inside the database pod** (superuser, no password; on prod use the primary,
@@ -316,6 +360,8 @@ unset PGPASSWORD
 | Symptom | Cause / fix |
 |---|---|
 | auth pod `CreateContainerConfigError: secret "auth-db" not found` | ESO hasn't created it yet. `kubectl -n mycloud-dev get externalsecret auth-db`, and `kubectl -n argocd get app postgres-dev` |
+| auth exits at start: `TOTP_KEY is required` / `must be 32 bytes` | Secret `auth-totp` missing or wrong. Check `vault kv get secret/mycloud/<env>/auth-totp` and `kubectl -n mycloud-<env> get externalsecret auth-totp` |
+| `auth-*` app stuck in sync on wave -1 | ESO can't read the Vault path (written before the merge?). `kubectl -n mycloud-<env> describe externalsecret auth-totp` |
 | ExternalSecret `SecretSyncedError` | Vault path or key missing (`vault kv get secret/mycloud/dev/auth-db`) or the store is not `Valid` (`kubectl get clustersecretstore vault`) |
 | Password changed in Vault, nothing happens | ESO re-reads every hour. Force it: `kubectl -n mycloud-dev annotate externalsecret auth-db force-sync=$(date +%s) --overwrite`, then restart auth |
 | `password authentication failed for user "auth"` | CNPG hasn't applied the role yet: `kubectl -n mycloud-dev describe databaserole auth` |
