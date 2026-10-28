@@ -9,7 +9,7 @@ labels:
 images:
 - name: mycloud-api
   newName: ghcr.io/moheddine-belhaj/mycloud-api
-  newTag: sha-52ed701
+  newTag: sha-955f160
 patches:
 - patch: |-
     - op: replace
