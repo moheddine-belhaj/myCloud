@@ -58,6 +58,14 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- range $name, $ref := .Values.secretEnv }}
+            # Read once at start: a changed Secret needs a rollout restart.
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required (printf "secretEnv.%s.secret is required" $name) $ref.secret }}
+                  key: {{ required (printf "secretEnv.%s.key is required" $name) $ref.key }}
+            {{- end }}
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 5
