@@ -4,7 +4,7 @@ Go module `github.com/moheddine-belhaj/mycloud/backend`. Several small services 
 
 - `cmd/` – one folder per program (`api`, `auth`).
 - `config/` – settings from environment variables.
-- `internal/` – private packages: health, database (pool + migrator), httpserver, auth (migrations/queries/sqlc store), testdb.
+- `internal/` – private packages: health, database (pool + migrator), httpserver, auth (2FA, migrations/queries/sqlc store), testdb.
 - `migrations/` – unused placeholder; migrations live in `internal/<service>/migrations`.
 - `sqlc.yaml` – sqlc config: generates type-safe Go from SQL.
 - `tests/` – integration tests, empty for now.
