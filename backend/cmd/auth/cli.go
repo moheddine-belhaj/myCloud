@@ -51,6 +51,8 @@ func runCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.Writer
 		return createAdmin(ctx, svc, args, stdin, stdout, stderr)
 	case "create-invite":
 		return createInvite(ctx, svc, args, stdout, stderr)
+	case "reset-2fa":
+		return reset2FA(ctx, svc, args, stdout, stderr)
 	}
 	return fmt.Errorf("unknown command %q", cmd)
 }
@@ -105,5 +107,29 @@ func createInvite(ctx context.Context, svc *auth.Service, args []string, stdout,
 	}
 	fmt.Fprintln(stdout, inv.Code)
 	fmt.Fprintf(stderr, "invite expires at %s\n", inv.ExpiresAt.UTC().Format(time.RFC3339))
+	return nil
+}
+
+// reset2FA removes 2FA from an account whose owner lost both the phone and
+// the recovery codes, and logs them out everywhere:
+//
+//	kubectl -n mycloud-dev exec deploy/auth -- /app reset-2fa --email mo@example.com
+//
+// Check who is asking (out of band) before running it.
+func reset2FA(ctx context.Context, svc *auth.Service, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("reset-2fa", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	email := fs.String("email", "", "email address of the account (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" || fs.NArg() > 0 {
+		return errors.New("usage: reset-2fa --email EMAIL")
+	}
+	u, err := svc.ResetTOTP(ctx, *email)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "2FA removed and sessions ended for %s (id %s)\n", u.Email, u.ID)
 	return nil
 }

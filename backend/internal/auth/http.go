@@ -30,12 +30,14 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/register", h.register)
 	mux.HandleFunc("POST /api/auth/login", h.login)
+	mux.HandleFunc("POST /api/auth/login/totp", h.loginTOTP)
 	mux.HandleFunc("POST /api/auth/logout", h.logout)
 	mux.Handle("GET /api/auth/me", h.RequireSession(http.HandlerFunc(h.me)))
 	mux.Handle("POST /api/auth/invites", h.RequireSession(RequireAdmin(http.HandlerFunc(h.createInvite))))
 	mux.Handle("POST /api/auth/2fa/setup", h.RequireSession(http.HandlerFunc(h.totpSetup)))
 	mux.Handle("POST /api/auth/2fa/enable", h.RequireSession(http.HandlerFunc(h.totpEnable)))
 	mux.Handle("POST /api/auth/2fa/disable", h.RequireSession(http.HandlerFunc(h.totpDisable)))
+	mux.Handle("POST /api/auth/2fa/recovery-codes", h.RequireSession(http.HandlerFunc(h.recoveryCodes)))
 }
 
 type registerRequest struct {
@@ -83,15 +85,52 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s, err := h.svc.Login(r.Context(), req.Email, req.Password, r.UserAgent())
+	var mfa *MFARequiredError
 	switch {
 	case err == nil:
 		setSessionCookie(w, s)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusNoContent)
+	case errors.As(err, &mfa):
+		// Password OK, 2FA on: no session yet. The client sends the code to
+		// /api/auth/login/totp; the browser sends the __Host-mfa cookie with it.
+		setMFACookie(w, mfa.Challenge)
+		writeJSON(w, http.StatusOK, loginResponse{MFARequired: true})
 	case errors.Is(err, ErrInvalidCredentials):
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Wrong email or password.")
 	default:
 		internalError(w, r, err)
+	}
+}
+
+type loginResponse struct {
+	MFARequired bool `json:"mfaRequired"`
+}
+
+type loginTOTPRequest struct {
+	Code string `json:"code"` // 6-digit TOTP code or a recovery code
+}
+
+// loginTOTP is the second login step.
+func (h *Handler) loginTOTP(w http.ResponseWriter, r *http.Request) {
+	var req loginTOTPRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	s, err := h.svc.LoginTOTP(r.Context(), mfaToken(r), req.Code, r.UserAgent())
+	switch {
+	case err == nil:
+		clearMFACookie(w)
+		setSessionCookie(w, s)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrInvalidCode):
+		writeError(w, http.StatusBadRequest, "invalid_code", "The code is wrong, expired or already used.")
+	case errors.Is(err, ErrNoChallenge):
+		clearMFACookie(w)
+		writeError(w, http.StatusUnauthorized, "mfa_expired", "Log in with your password again.")
+	default:
+		writeTOTPError(w, r, err)
 	}
 }
 
@@ -197,6 +236,25 @@ func (h *Handler) totpDisable(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type recoveryCodesRequest struct {
+	Code string `json:"code"` // from the authenticator app; recovery codes are refused
+}
+
+// recoveryCodes replaces the user's recovery codes with 10 new ones.
+func (h *Handler) recoveryCodes(w http.ResponseWriter, r *http.Request) {
+	var req recoveryCodesRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	u, _ := UserFromContext(r.Context())
+	codes, err := h.svc.RegenerateRecoveryCodes(r.Context(), u, req.Code)
+	if err != nil {
+		writeTOTPError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, totpEnableResponse{RecoveryCodes: codes})
 }
 
 // writeTOTPError maps the 2FA errors to responses.

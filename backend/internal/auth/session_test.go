@@ -11,10 +11,17 @@ import (
 
 // newTestAPI returns the full API (routes + cross-origin protection) on a
 // fresh database.
+// testAPI is the API handler plus its service, so helpers like login can
+// reach the service (finishTOTPLogin needs its clock).
+type testAPI struct {
+	http.Handler
+	s *Service
+}
+
 func newTestAPI(t *testing.T) (http.Handler, *Service) {
 	t.Helper()
 	mux, s := newTestMux(t)
-	return Protect(mux), s
+	return &testAPI{Protect(mux), s}, s
 }
 
 // do sends a request with an optional JSON body and session token.
@@ -31,10 +38,14 @@ func do(h http.Handler, method, path, body, token string) *httptest.ResponseReco
 	return rec
 }
 
-// login logs in over HTTP and returns the session cookie.
+// login logs in over HTTP and returns the session cookie. For an account
+// with 2FA (enableTOTPFor), it also sends the code, like the browser would.
 func login(t *testing.T, h http.Handler, email string) *http.Cookie {
 	t.Helper()
 	rec := do(h, http.MethodPost, "/api/auth/login", `{"email":"`+email+`","password":"`+goodPassword+`"}`, "")
+	if rec.Code == http.StatusOK {
+		rec = finishTOTPLogin(t, h, email, rec)
+	}
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("login %s = %d %s, want 204", email, rec.Code, rec.Body)
 	}
@@ -145,6 +156,7 @@ func TestCreateInviteHTTP(t *testing.T) {
 	h, s := newTestAPI(t)
 	admin := newUser(t, s, "admin@example.com", RoleAdmin)
 	newUser(t, s, "user@example.com", RoleUser)
+	enableTOTPFor(t, s, admin) // admin features need 2FA
 	adminCookie := login(t, h, "admin@example.com")
 	userCookie := login(t, h, "user@example.com")
 
@@ -218,7 +230,7 @@ func TestCrossOriginPostIsRejected(t *testing.T) {
 // TestFullFlow walks the whole M2 story through the HTTP API.
 func TestFullFlow(t *testing.T) {
 	h, s := newTestAPI(t)
-	newUser(t, s, "admin@example.com", RoleAdmin) // the CLI's create-admin
+	enableTOTPFor(t, s, newUser(t, s, "admin@example.com", RoleAdmin)) // the CLI's create-admin, then 2FA
 
 	admin := login(t, h, "admin@example.com")
 	rec := do(h, http.MethodPost, "/api/auth/invites", `{}`, admin.Value)

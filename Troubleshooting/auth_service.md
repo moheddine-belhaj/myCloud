@@ -19,6 +19,7 @@ Suggested location in the repo: `deploy/services/auth/README.md`
 - [M2 PR 1: in the cluster](#m2-pr-1-in-the-cluster)
 - [M3 PR 1: TOTP encryption key](#m3-pr-1-totp-encryption-key)
 - [M3 PR 2: 2FA setup, enable, disable](#m3-pr-2-2fa-setup-enable-disable)
+- [M3 PR 3: login with 2FA](#m3-pr-3-login-with-2fa)
 - [Connect to the database by hand](#connect-to-the-database-by-hand)
 - [Troubleshooting](#troubleshooting)
 
@@ -355,6 +356,58 @@ Expected errors: wrong code `400 invalid_code`, same code twice `400 invalid_cod
 
 ---
 
+## M3 PR 3: login with 2FA
+
+Tests (laptop, `backend/`, `TEST_DATABASE_URL` set). They must **run**, not skip:
+```bash
+go test -race ./internal/auth
+go test -v -run 'LoginWithTOTP|LoginTOTP|RecoveryCode|ResetTOTP|AdminNeeds2FA' ./internal/auth | grep -E '^(--- |ok)'
+```
+
+The migration ran in dev. Expect `00003_mfa_challenges.sql` and a table `mfa_challenges`:
+```bash
+kubectl -n mycloud-dev logs deploy/auth | grep 00003
+kubectl -n mycloud-dev exec db-1 -- psql -U postgres -d auth -c '\d mfa_challenges'
+```
+
+Login with 2FA against dev, through a port-forward (`oathtool` plays the phone; `SECRET` is the one from
+the PR 2 setup, or scan with a real app and type its code instead):
+```bash
+kubectl -n mycloud-dev port-forward svc/auth 8082:80 &
+B=http://localhost:8082; J='Content-Type: application/json'
+read -rp 'email: ' EMAIL; read -rsp 'password: ' PW; echo
+# Step 1: 200 {"mfaRequired":true} and a __Host-mfa cookie, no session yet
+MFA=$(curl -si $B/api/auth/login -H "$J" -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}" \
+      | sed -n 's/^set-cookie: __Host-mfa=\([^;]*\).*/\1/ip')
+# Step 2: the code. Expect 204 and a __Host-session cookie
+curl -si $B/api/auth/login/totp -H "$J" -H "Cookie: __Host-mfa=$MFA" \
+  -d "{\"code\":\"$(oathtool --totp -b $SECRET)\"}" | grep -iE '^HTTP|set-cookie'
+unset PW MFA; kill %1
+```
+
+The logs show which second factor was used (`totp` or `recovery_code`), never the code:
+```bash
+kubectl -n mycloud-dev logs deploy/auth | grep -E '2fa code required|second_factor|recovery code used|challenge used up'
+```
+
+Admin features need 2FA. An admin without it gets `403 totp_required` on `POST /api/auth/invites`, can still log in,
+and turns it on with `/api/auth/2fa/setup` + `/enable`.
+
+Lost phone **and** recovery codes: remove 2FA from the account (it also ends all its sessions).
+Check who is asking first:
+```bash
+kubectl -n mycloud-dev exec deploy/auth -- /app reset-2fa --email someone@example.com
+```
+
+| Status | Error | Meaning |
+|---|---|---|
+| 200 | `{"mfaRequired":true}` | Password OK, send the code to `/api/auth/login/totp` |
+| 400 | `invalid_code` | Wrong, expired or already used code (counts as an attempt) |
+| 401 | `mfa_expired` | No `__Host-mfa` cookie, older than 5 minutes, or 5 wrong codes: log in again |
+| 403 | `totp_required` | Admin route without 2FA on |
+
+---
+
 ## Connect to the database by hand
 
 **SQL shell inside the database pod** (superuser, no password; on prod use the primary,
@@ -409,6 +462,7 @@ unset PGPASSWORD
 | Symptom | Cause / fix |
 |---|---|
 | auth pod `CreateContainerConfigError: secret "auth-db" not found` | ESO hasn't created it yet. `kubectl -n mycloud-dev get externalsecret auth-db`, and `kubectl -n argocd get app postgres-dev` |
+| Postman folder 2 stops at "Login (admin): 2FA code" with `adminTotpSecret is empty` | The admin has 2FA but Postman doesn't know the secret. Use a fresh local database, or `reset-2fa` the local admin |
 | Every 2FA code is `invalid_code` | Clock drift: codes are accepted ±30 s. Check the phone's time and `timedatectl` on the nodes |
 | 2FA request returns 500, log says `open totp secret` | The row was sealed with another key: `auth-totp` in Vault was changed. Restore the old key, or reset that user's 2FA |
 | auth exits at start: `TOTP_KEY is required` / `must be 32 bytes` | Secret `auth-totp` missing or wrong. Check `vault kv get secret/mycloud/<env>/auth-totp` and `kubectl -n mycloud-<env> get externalsecret auth-totp` |

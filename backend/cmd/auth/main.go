@@ -36,6 +36,7 @@ const usage = `usage:
   auth [serve]                                  start the HTTP server
   auth create-admin --email EMAIL < password    create an admin account
   auth create-invite [--ttl 168h]               print a new invite code
+  auth reset-2fa --email EMAIL                  remove 2FA from an account
 `
 
 // sessionCleanupEvery is how often expired sessions are deleted.
@@ -95,7 +96,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	case "serve":
 		slog.SetDefault(slog.New(slog.NewJSONHandler(stdout, nil)).With("service", "auth"))
 		return serve()
-	case "create-admin", "create-invite":
+	case "create-admin", "create-invite", "reset-2fa":
 		// Logs go to stderr so stdout only carries the command's result.
 		slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, nil)).With("service", "auth", "command", cmd))
 		return runCLI(cmd, args, stdin, stdout, stderr)

@@ -77,6 +77,20 @@ func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	return err
 }
 
+const deleteUserSessions = `-- name: DeleteUserSessions :execrows
+DELETE FROM sessions
+WHERE user_id = $1
+`
+
+// Ends every session of a user (2FA reset by an admin).
+func (q *Queries) DeleteUserSessions(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUserSessions, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getSessionUser = `-- name: GetSessionUser :one
 SELECT u.id, u.email, u.role, u.created_at, s.expires_at AS session_expires_at,
        (t.enabled_at IS NOT NULL)::boolean AS totp_enabled
