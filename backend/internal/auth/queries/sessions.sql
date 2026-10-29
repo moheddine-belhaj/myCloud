@@ -25,3 +25,8 @@ WHERE expires_at <= now();
 DELETE FROM sessions
 WHERE user_id = @user_id
   AND token_hash <> @keep_token_hash;
+
+-- name: DeleteUserSessions :execrows
+-- Ends every session of a user (2FA reset by an admin).
+DELETE FROM sessions
+WHERE user_id = @user_id;

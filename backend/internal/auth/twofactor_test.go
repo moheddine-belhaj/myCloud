@@ -50,7 +50,7 @@ func enable2FA(t *testing.T, s *Service, u User, sessionTok string) (string, []s
 	return setup.Secret, codes
 }
 
-var recoveryCodeRe = regexp.MustCompile(`^[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}$`)
+var recoveryCodeFormat = regexp.MustCompile(`^[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}$`)
 
 func TestSetupAndEnableTOTP(t *testing.T) {
 	s, pool := newTestService(t)
@@ -98,7 +98,7 @@ func TestSetupAndEnableTOTP(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, c := range codes {
-		if !recoveryCodeRe.MatchString(c) || seen[c] {
+		if !recoveryCodeFormat.MatchString(c) || seen[c] {
 			t.Errorf("bad or duplicate recovery code %q", c)
 		}
 		seen[c] = true

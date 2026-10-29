@@ -59,6 +59,8 @@ var (
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	// ErrNoSession means the token is missing, unknown or expired.
 	ErrNoSession = errors.New("no valid session")
+	// ErrUserNotFound is only used by admin tools (the CLI), never by login.
+	ErrUserNotFound = errors.New("no user with this email")
 	// ErrPasswordLength is re-exported so callers only need this package.
 	ErrPasswordLength = password.ErrLength
 )
@@ -255,23 +257,43 @@ func (s *Service) Login(ctx context.Context, email, pw, userAgent string) (Sessi
 		return Session{}, ErrInvalidCredentials
 	}
 
+	// With 2FA on, the password alone is not enough: hand out a challenge
+	// and let LoginTOTP (mfa.go) finish the login.
+	on, err := s.totpEnabled(ctx, row.ID)
+	if err != nil {
+		return Session{}, err
+	}
+	if on {
+		ch, err := s.startChallenge(ctx, row.ID, userAgent)
+		if err != nil {
+			return Session{}, err
+		}
+		slog.InfoContext(ctx, "password accepted, 2fa code required", "user_id", row.ID)
+		return Session{}, &MFARequiredError{Challenge: ch}
+	}
+
+	sess, err := s.newSession(ctx, s.q, User{ID: row.ID, Email: row.Email, Role: row.Role, CreatedAt: row.CreatedAt.Time}, userAgent)
+	if err != nil {
+		return Session{}, err
+	}
+	slog.InfoContext(ctx, "user logged in", "user_id", row.ID)
+	return sess, nil
+}
+
+// newSession stores a new session for u and returns its token.
+func (s *Service) newSession(ctx context.Context, q *store.Queries, u User, userAgent string) (Session, error) {
 	tok := token.New()
 	expires := time.Now().Add(SessionTTL)
-	err = s.q.CreateSession(ctx, store.CreateSessionParams{
+	err := q.CreateSession(ctx, store.CreateSessionParams{
 		TokenHash: token.Hash(tok),
-		UserID:    row.ID,
+		UserID:    u.ID,
 		ExpiresAt: pgtype.Timestamptz{Time: expires, Valid: true},
 		UserAgent: cleanUserAgent(userAgent),
 	})
 	if err != nil {
 		return Session{}, fmt.Errorf("create session: %w", err)
 	}
-	slog.InfoContext(ctx, "user logged in", "user_id", row.ID)
-	return Session{
-		Token:     tok,
-		ExpiresAt: expires,
-		User:      User{ID: row.ID, Email: row.Email, Role: row.Role, CreatedAt: row.CreatedAt.Time},
-	}, nil
+	return Session{Token: tok, ExpiresAt: expires, User: u}, nil
 }
 
 // failLogin burns the same hashing work as a real password check, then
@@ -349,6 +371,14 @@ func (s *Service) RunSessionCleanup(ctx context.Context, every time.Duration) {
 			slog.ErrorContext(ctx, "session cleanup failed", "err", err)
 		case n > 0:
 			slog.InfoContext(ctx, "expired sessions deleted", "count", n)
+		}
+		// Unfinished 2FA logins expire after 5 minutes; clean those up too.
+		n, err = s.q.DeleteExpiredMFAChallenges(ctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			slog.ErrorContext(ctx, "2fa challenge cleanup failed", "err", err)
+		case n > 0:
+			slog.InfoContext(ctx, "expired 2fa challenges deleted", "count", n)
 		}
 		select {
 		case <-ctx.Done():

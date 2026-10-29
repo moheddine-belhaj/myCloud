@@ -43,6 +43,40 @@ func clearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
+// MFACookieName holds a half-finished login (password OK, code missing).
+// Same attributes as the session cookie, but it lives only 5 minutes and
+// grants nothing on its own.
+const MFACookieName = "__Host-mfa"
+
+func setMFACookie(w http.ResponseWriter, c Challenge) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     MFACookieName,
+		Value:    c.Token,
+		Path:     "/",
+		Expires:  c.ExpiresAt,
+		MaxAge:   int(time.Until(c.ExpiresAt).Seconds()),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func clearMFACookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: MFACookieName, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// mfaToken returns the challenge token from the request's cookie, or "".
+func mfaToken(r *http.Request) string {
+	c, err := r.Cookie(MFACookieName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
 // sessionToken returns the token from the request's cookie, or "".
 func sessionToken(r *http.Request) string {
 	c, err := r.Cookie(CookieName)
@@ -77,7 +111,10 @@ func (h *Handler) RequireSession(next http.Handler) http.Handler {
 	})
 }
 
-// RequireAdmin lets only admins through. Put it after RequireSession.
+// RequireAdmin lets only admins through, and only with 2FA on: an admin
+// account can create invites, so a password alone must not be enough.
+// An admin without 2FA can still log in and turn it on (/api/auth/2fa/*).
+// Put it after RequireSession.
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := UserFromContext(r.Context())
@@ -87,6 +124,10 @@ func RequireAdmin(next http.Handler) http.Handler {
 		}
 		if u.Role != RoleAdmin {
 			writeError(w, http.StatusForbidden, "forbidden", "Only admins can do this.")
+			return
+		}
+		if !u.TOTPEnabled {
+			writeError(w, http.StatusForbidden, "totp_required", "Turn on two-factor authentication to use admin features.")
 			return
 		}
 		next.ServeHTTP(w, r)

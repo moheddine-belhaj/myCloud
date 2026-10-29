@@ -19,6 +19,16 @@ type Invite struct {
 	UsedBy    *uuid.UUID
 }
 
+type MfaChallenge struct {
+	ID        uuid.UUID
+	TokenHash []byte
+	UserID    uuid.UUID
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	Attempts  int32
+	UserAgent string
+}
+
 type RecoveryCode struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID

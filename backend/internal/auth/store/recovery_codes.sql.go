@@ -11,6 +11,20 @@ import (
 	"github.com/google/uuid"
 )
 
+const countUnusedRecoveryCodes = `-- name: CountUnusedRecoveryCodes :one
+SELECT count(*)
+FROM recovery_codes
+WHERE user_id = $1
+  AND used_at IS NULL
+`
+
+func (q *Queries) CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnusedRecoveryCodes, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteRecoveryCodes = `-- name: DeleteRecoveryCodes :exec
 DELETE FROM recovery_codes
 WHERE user_id = $1
@@ -35,4 +49,26 @@ type InsertRecoveryCodesParams struct {
 func (q *Queries) InsertRecoveryCodes(ctx context.Context, arg InsertRecoveryCodesParams) error {
 	_, err := q.db.Exec(ctx, insertRecoveryCodes, arg.UserID, arg.CodeHashes)
 	return err
+}
+
+const useRecoveryCode = `-- name: UseRecoveryCode :execrows
+UPDATE recovery_codes
+SET used_at = now()
+WHERE user_id = $1
+  AND code_hash = $2
+  AND used_at IS NULL
+`
+
+type UseRecoveryCodeParams struct {
+	UserID   uuid.UUID
+	CodeHash []byte
+}
+
+// Marks one unused code as used. 0 rows: wrong or already used.
+func (q *Queries) UseRecoveryCode(ctx context.Context, arg UseRecoveryCodeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, useRecoveryCode, arg.UserID, arg.CodeHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

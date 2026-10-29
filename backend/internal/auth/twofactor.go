@@ -130,8 +130,9 @@ func (s *Service) EnableTOTP(ctx context.Context, u User, code, sessionTok strin
 	return codes, nil
 }
 
-// DisableTOTP turns 2FA off. It needs the password and a current code, so a
-// stolen session alone can't remove the second factor.
+// DisableTOTP turns 2FA off. It needs the password and a current code (or a
+// recovery code, for a lost phone), so a stolen session alone can't remove
+// the second factor.
 func (s *Service) DisableTOTP(ctx context.Context, u User, pw, code string) error {
 	if s.totpKeys == nil {
 		return ErrTOTPUnavailable
@@ -149,19 +150,11 @@ func (s *Service) DisableTOTP(ctx context.Context, u User, pw, code string) erro
 	if err := s.checkPassword(ctx, u, pw); err != nil {
 		return err
 	}
-	step, err := s.checkCode(ctx, u, row, code)
-	if err != nil {
+	if _, err := s.checkSecondFactor(ctx, u.ID, code, true); err != nil {
 		return err
 	}
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
-		n, err := q.UseTOTPStep(ctx, store.UseTOTPStepParams{UserID: u.ID, Step: step})
-		if err != nil {
-			return fmt.Errorf("use totp step: %w", err)
-		}
-		if n == 0 { // the same code was used by a parallel request
-			return ErrInvalidCode
-		}
 		if err := q.DeleteTOTP(ctx, u.ID); err != nil {
 			return fmt.Errorf("delete totp: %w", err)
 		}

@@ -13,8 +13,10 @@ The auth service: handlers, business logic and its database layer. TOTP 2FA, ema
 - `keyring/` – AES-256-GCM encryption for TOTP seeds, with the key from Vault (M3).
 - `totp/` – RFC 6238 codes (SHA-1, 6 digits, 30 s, ±1 step), tested against the RFC vectors (M3).
 - `twofactor.go` – 2FA setup, enable (returns 10 recovery codes, ends other sessions) and disable (password + code).
+- `mfa.go` – the second login step: a 5-minute challenge (`__Host-mfa` cookie, 5 attempts), TOTP or recovery code,
+  new recovery codes, and the CLI's `reset-2fa`. Admin routes require 2FA (`RequireAdmin`).
 
 Flow: change a migration or query → run `sqlc generate` (see `backend/sqlc.yaml`) → use the typed functions in `store/`. CI runs `sqlc diff` and fails if the generated code is stale.
 
-Tables: `user_totp` (encrypted secret, `enabled_at`, `last_step` so each code works once), `recovery_codes` (SHA-256 only),
+Tables: `mfa_challenges` (half-finished logins, SHA-256 of the cookie token, attempt counter), `user_totp` (encrypted secret, `enabled_at`, `last_step` so each code works once), `recovery_codes` (SHA-256 only),
 `users` (argon2id hash, lowercase email, role), `invites` (single-use, only the SHA-256 of the code is stored), `sessions` (only the SHA-256 of the cookie token is stored, so a database leak does not leak logins).
