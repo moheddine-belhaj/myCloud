@@ -100,6 +100,9 @@ MyCloud runs on a **two-node k3s cluster** of Fujitsu Esprimo Q958 mini-PCs at h
 | `cp1` | Kubernetes control plane (also runs workloads) |
 | `worker1` | Worker node |
 
+![MyCloud architecture](docs/architecture/preview_infra.png)
+
+
 - The home connection has **no public IPv4 and no open ports**. Public traffic reaches the cluster only
   through a **Cloudflare Tunnel**, at `cloud.mohedine.dev`.
 - Cluster administration (`kubectl`, SSH) is possible **only over Tailscale**.
