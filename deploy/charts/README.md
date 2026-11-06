@@ -1,3 +1,3 @@
 # charts
 
-Helm charts we write ourselves. Currently one: `service/`, the generic chart used by every Go service.
+Helm charts I write myself. Currently one: `service/`, the generic chart used by every Go service.
