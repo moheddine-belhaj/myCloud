@@ -1,9 +1,9 @@
 # auth
 
-The auth service: handlers, business logic and its database layer. TOTP 2FA, email verification and recovery codes come in later PRs.
+The auth service: handlers, business logic and its database layer. Includes TOTP 2FA and recovery codes; email verification comes in a later PR.
 
-- `http.go` – routes: `POST /api/auth/register` (invite code), `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` (needs a session), `POST /api/auth/invites` (admin only).
-- `service.go` – business logic: register, login, logout, invites, `CreateAdmin`, and the hourly cleanup of expired sessions.
+- `http.go` – routes: `POST /api/auth/register` (invite code), `POST /api/auth/login` (answers `{"mfaRequired":true}` and sets the `__Host-mfa` cookie when 2FA is on), `POST /api/auth/login/totp` (second step: TOTP or recovery code), `POST /api/auth/logout`, `GET /api/auth/me` (needs a session), `POST /api/auth/invites` (admin only, needs 2FA), `POST /api/auth/2fa/setup|enable|disable`, `POST /api/auth/2fa/recovery-codes` (replaces the 10 codes; needs a current app code).
+- `service.go` – business logic: register, login, logout, invites, `CreateAdmin`, and the hourly cleanup of expired sessions and expired 2FA challenges. `Login` returns `*MFARequiredError` (not a failure) when 2FA is on.
 - `session.go` – session cookie handling and the middlewares `RequireSession`, `RequireAdmin` and `Protect` (rejects cross-site POSTs).
 - `password/` – argon2id hashing and verification.
 - `token/` – random tokens (session cookies, invite codes) and their SHA-256 hashes.
@@ -14,7 +14,7 @@ The auth service: handlers, business logic and its database layer. TOTP 2FA, ema
 - `totp/` – RFC 6238 codes (SHA-1, 6 digits, 30 s, ±1 step), tested against the RFC vectors (M3).
 - `twofactor.go` – 2FA setup, enable (returns 10 recovery codes, ends other sessions) and disable (password + code).
 - `mfa.go` – the second login step: a 5-minute challenge (`__Host-mfa` cookie, 5 attempts), TOTP or recovery code,
-  new recovery codes, and the CLI's `reset-2fa`. Admin routes require 2FA (`RequireAdmin`).
+  new recovery codes, and the CLI's `reset-2fa`. Disabling 2FA also accepts a recovery code. Admin routes require 2FA (`RequireAdmin`).
 
 Flow: change a migration or query → run `sqlc generate` (see `backend/sqlc.yaml`) → use the typed functions in `store/`. CI runs `sqlc diff` and fails if the generated code is stale.
 

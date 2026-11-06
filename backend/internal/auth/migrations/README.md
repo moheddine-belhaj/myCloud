@@ -3,6 +3,8 @@
 The auth schema, as [goose](https://github.com/pressly/goose) SQL migrations.
 
 - `00001_init.sql` – creates `users`, `invites`, `sessions`. `-- +goose Up` / `-- +goose Down` mark apply and rollback sections.
+- `00002_totp.sql` – `user_totp` and `recovery_codes` for two-factor authentication.
+- `00003_mfa_challenges.sql` – `mfa_challenges`: half-finished logins (token hash, 5-minute expiry, attempt counter).
 - `embed.go` – `//go:embed *.sql` bakes the files into the binary (`migrations.FS`), so the distroless image needs no extra files.
 - `migrations_test.go` – applies the migrations on a throwaway database and checks the constraints.
 
