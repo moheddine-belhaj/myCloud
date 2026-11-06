@@ -429,3 +429,28 @@ kubectl -n default delete externalsecret vault-hello
 | `secret-store` app `SyncFailed` | ESO CRDs/webhook not ready yet. It retries; check `kubectl -n argocd get app external-secrets` |
 | A password shows up in the k3s audit log | It was in a `kubectl exec` command line (the URL is logged). Pass secrets through stdin (`exec -i … sh -c 'read -r X'`) and rotate that password |
 | k3s won't start after changing the audit config | `sudo journalctl -u k3s -n 50`; remove `/etc/rancher/k3s/config.yaml.d/10-audit.yaml` and restart to roll back |
+
+
+
+# Setup to test mannually 
+
+```bash
+
+# one line per event: time, type, operation, path, who, policies, role, IP, error
+vlog='{t: .time, type, op: .request.operation, path: .request.path,
+       who: .auth.display_name, pol: .auth.policies, role: .auth.metadata.role,
+       ip: .request.remote_address, err: .error}'
+       
+A= #directory form 
+vault audit list -detailed
+
+```
+
+# Look at it
+
+```bash
+sudo ls -lh /var/log/vault/                                  # current file + rotated .gz (30 days kept)
+sudo tail -n 20 $A | jq -c "$vlog"                           # last 10 request/response pairs
+sudo tail -f $A | jq -c "select(.type==\"response\") | $vlog"   # live; Ctrl-C to stop
+
+```
