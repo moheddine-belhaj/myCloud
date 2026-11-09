@@ -2,6 +2,9 @@
 image:
   repository: ghcr.io/moheddine-belhaj/mycloud-auth
 
+imagePullSecrets:
+  - name: ghcr-pull
+
 database:
   enabled: true
   name: auth
