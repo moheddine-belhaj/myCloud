@@ -18,6 +18,8 @@ spec:
         app.kubernetes.io/part-of: mycloud
     spec:
       automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-pull          # from deploy/apps/ghcr-pull (Vault via ESO)
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true

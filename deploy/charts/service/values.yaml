@@ -11,6 +11,9 @@ image:
 replicas: 1
 port: 8080
 
+# Secrets with registry credentials, e.g. [{name: ghcr-pull}].
+imagePullSecrets: []
+
 # Plain, non-secret environment variables: { NAME: value }
 env: {}
 
