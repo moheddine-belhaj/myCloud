@@ -1,7 +1,7 @@
 # auth in prod. image.tag is written by promote.yml: don't edit by hand.
 environment: prod
 image:
-  tag: sha-f9ed4e7
+  tag: sha-fe8b3cc
 replicas: 2
 ingress:
   host: cloud.mohedine.dev
