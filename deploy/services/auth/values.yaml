@@ -14,6 +14,10 @@ ingress:
   enabled: true
   path: /api/auth
 
+# M4: ForwardAuth endpoint GET /verify for Traefik, on its own port.
+# In the cluster: http://auth.mycloud-<env>.svc.cluster.local:8081/verify
+internalPort: 8081
+
 # M3: AES-256 key that encrypts TOTP seeds, from Vault (secret/mycloud/<env>/auth-totp, key "key").
 externalSecrets:
   - name: auth-totp

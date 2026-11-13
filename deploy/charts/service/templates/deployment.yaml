@@ -39,9 +39,17 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.port }}
+            {{- if .Values.internalPort }}
+            - name: internal
+              containerPort: {{ .Values.internalPort }}
+            {{- end }}
           env:
             - name: ADDR
               value: ":{{ .Values.port }}"
+            {{- if .Values.internalPort }}
+            - name: INTERNAL_ADDR
+              value: ":{{ .Values.internalPort }}"
+            {{- end }}
             {{- if .Values.database.enabled }}
             - name: DB_USER
               valueFrom:

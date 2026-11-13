@@ -11,3 +11,9 @@ spec:
     - name: http
       port: 80
       targetPort: http
+    {{- if .Values.internalPort }}
+    # Cluster-only port (no Ingress), e.g. auth's ForwardAuth endpoint for Traefik.
+    - name: internal
+      port: {{ .Values.internalPort }}
+      targetPort: internal
+    {{- end }}
