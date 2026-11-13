@@ -11,7 +11,7 @@ setup, all built and run from a home lab.
 
 > **Status:** early development. The CI/CD pipeline, a minimal Go API (`/healthz`, `/readyz`,
 > `/version`), CloudNativePG Postgres, Vault-backed secrets and the first part of the auth service
-> (invite registration, login, logout, sessions, admin invites; TOTP is next) are in place. Features are added phase by phase (see [Roadmap](#roadmap)).
+> (invite registration, login, logout, sessions, admin invites, TOTP 2FA with recovery codes) are in place. Features are added phase by phase (see [Roadmap](#roadmap)).
 
 ## Tech stack
 
