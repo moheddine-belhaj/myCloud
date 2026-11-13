@@ -1,8 +1,8 @@
 # auth in qa. image.tag is written by promote.yml: don't edit by hand.
 environment: qa
 image:
-  tag: sha-f9ed4e7
+  tag: sha-fe8b3cc
 ingress:
   host: cloud-qa.mohedine.dev
 env:
-  TOTP_ISSUER: "MyCloud qa"    # account title in authenticator apps
+  TOTP_ISSUER: "MyCloud qa" # account title in authenticator apps
