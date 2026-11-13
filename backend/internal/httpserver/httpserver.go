@@ -38,3 +38,26 @@ func Run(ctx context.Context, srv *http.Server, shutdownTimeout time.Duration) e
 	// Shutdown stops accepting new connections and waits for in-flight requests.
 	return srv.Shutdown(shutdownCtx)
 }
+
+// RunAll runs several servers (for example a public and an internal
+// listener) with the same lifecycle: when ctx is cancelled all of them shut
+// down, and when one of them fails the others are stopped too, so the
+// process never keeps running half-alive. It returns the first error.
+func RunAll(ctx context.Context, shutdownTimeout time.Duration, servers ...*http.Server) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errCh := make(chan error, len(servers))
+	for _, srv := range servers {
+		go func() { errCh <- Run(ctx, srv, shutdownTimeout) }()
+	}
+
+	var first error
+	for range servers {
+		if err := <-errCh; err != nil && first == nil {
+			first = err
+		}
+		cancel() // one server stopped: stop the rest
+	}
+	return first
+}

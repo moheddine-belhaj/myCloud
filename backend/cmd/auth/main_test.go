@@ -91,3 +91,37 @@ func TestLoadTOTPKeys(t *testing.T) {
 		})
 	}
 }
+
+// The ForwardAuth endpoint lives only on the internal listener: the public
+// router (behind the Ingress) must not serve it under any path.
+func TestVerifyOnlyOnInternalListener(t *testing.T) {
+	called := false
+	stub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	internal := newInternalMux(stub)
+
+	rec := httptest.NewRecorder()
+	internal.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/verify", nil))
+	if rec.Code != http.StatusOK || !called {
+		t.Fatalf("internal GET /verify = %d (called %v), want 200 from the verify handler", rec.Code, called)
+	}
+
+	for _, path := range []string{"/healthz", "/api/auth/version", "/api/auth/me"} {
+		rec := httptest.NewRecorder()
+		internal.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("internal GET %s = %d, want 404", path, rec.Code)
+		}
+	}
+
+	public := newMux(nil)
+	for _, path := range []string{"/verify", "/api/auth/verify"} {
+		rec := httptest.NewRecorder()
+		public.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("public GET %s = %d, want 404", path, rec.Code)
+		}
+	}
+}

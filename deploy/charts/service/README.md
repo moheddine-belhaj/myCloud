@@ -10,7 +10,7 @@ Instead of copying Deployment/Service/Ingress YAML per service, a service is jus
 - `templates/` – Kubernetes manifests written as Go templates:
   - `_helpers.tpl` – reusable snippets (`service.name`, `service.selectorLabels`, `service.labels`). Files starting with `_` are not rendered on their own.
   - `deployment.yaml` – pods, probes (`/healthz`, `/readyz`), resources, hardened security context.
-  - `service.yaml` – ClusterIP Service in front of the pods.
+  - `service.yaml` – ClusterIP Service in front of the pods; with `internalPort` set, a second port `internal` that no Ingress uses (auth's ForwardAuth endpoint).
   - `ingress.yaml` – Traefik Ingress, rendered only when `ingress.enabled: true`.
   - `externalsecret.yaml` – one `ExternalSecret` per `externalSecrets` entry: ESO copies a Vault path into a Secret (sync wave -1, so it exists before the pods start).
 

@@ -3,6 +3,7 @@
 The auth service: handlers, business logic and its database layer. Includes TOTP 2FA and recovery codes; email verification comes in a later PR.
 
 - `http.go` – routes: `POST /api/auth/register` (invite code), `POST /api/auth/login` (answers `{"mfaRequired":true}` and sets the `__Host-mfa` cookie when 2FA is on), `POST /api/auth/login/totp` (second step: TOTP or recovery code), `POST /api/auth/logout`, `GET /api/auth/me` (needs a session), `POST /api/auth/invites` (admin only, needs 2FA), `POST /api/auth/2fa/setup|enable|disable`, `POST /api/auth/2fa/recovery-codes` (replaces the 10 codes; needs a current app code).
+- `verify.go` – `Verify`, the ForwardAuth endpoint for Traefik (M4), served only on the internal listener (`:8081/verify`): session cookie → `200` + `X-User-Id`/`X-User-Role` (admin only with 2FA), `401` without a session, `403` for cross-site writes, `500` fails closed.
 - `service.go` – business logic: register, login, logout, invites, `CreateAdmin`, and the hourly cleanup of expired sessions and expired 2FA challenges. `Login` returns `*MFARequiredError` (not a failure) when 2FA is on.
 - `session.go` – session cookie handling and the middlewares `RequireSession`, `RequireAdmin` and `Protect` (rejects cross-site POSTs).
 - `password/` – argon2id hashing and verification.

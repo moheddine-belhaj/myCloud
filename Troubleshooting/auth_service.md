@@ -408,6 +408,30 @@ kubectl -n mycloud-dev exec deploy/auth -- /app reset-2fa --email someone@exampl
 
 ---
 
+## M4 PR 1: ForwardAuth verify endpoint
+
+auth now listens on two ports: `8080` (public API, behind the Ingress) and `8081` (only `GET /verify`, for Traefik).
+
+```bash
+# Both ports are on the Service
+k -n mycloud-dev get svc auth -o jsonpath='{range .spec.ports[*]}{.name}={.port}{"\n"}{end}'
+# http=80
+# internal=8081
+
+# Log in through the public port, then call verify like Traefik does
+k -n mycloud-dev port-forward svc/auth 8080:80 8081:8081
+TOK=$(curl -s -D - -o /dev/null -H 'Content-Type: application/json' \
+  -d '{"email":"<email>","password":"<password>"}' localhost:8080/api/auth/login \
+  | sed -n 's/^set-cookie: __Host-session=\([^;]*\).*/\1/ip')   # accounts without 2FA; with 2FA use Postman folder 8
+curl -i -H "Cookie: __Host-session=$TOK" localhost:8081/verify   # 200 + X-User-Id, X-User-Role
+curl -i localhost:8081/verify                                     # 401 unauthenticated
+curl -i -H "Cookie: __Host-session=$TOK" -H 'X-Forwarded-Method: POST' \
+  -H 'Sec-Fetch-Site: cross-site' localhost:8081/verify           # 403 cross_origin
+curl -s -o /dev/null -w '%{http_code}\n' https://cloud-dev.mohedine.dev/verify   # not routed to auth
+```
+
+Until PR 2 adds NetworkPolicies, any pod in the cluster can reach port 8081. It only answers "is this cookie valid", so it grants nothing on its own.
+
 ## Connect to the database by hand
 
 **SQL shell inside the database pod** (superuser, no password; on prod use the primary,
@@ -475,6 +499,10 @@ unset PGPASSWORD
 | CI `helm lint` / `helm template` fails with `… is required` | A value is missing in `deploy/services/<svc>/<env>/values.yaml` |
 | `promote` fails with `auth has no valid tag in dev` | Dev was never built; push a backend change or re-run the `backend` workflow |
 | `auth-qa` / `auth-prod` Degraded with `ImagePullBackOff` | Tag is still `sha-REPLACEME`; run the promote workflow |
+| `verify` returns 401 with a valid login | The cookie name must be `__Host-session`; the token is the cookie value, not the whole `Set-Cookie` line |
+| `verify` gives `X-User-Role: user` for an admin | Expected until the admin turns on 2FA: the effective role is `admin` only with 2FA, like `RequireAdmin` |
+| auth exits at start: `listen tcp :8081: bind: address already in use` | Locally another process uses 8081: set `INTERNAL_ADDR=:8091` |
+| `port-forward` fails for 8081 | The pod still runs an image without the internal listener: check the tag and `k -n mycloud-dev rollout status deploy/auth` |
 | `sqlc generate` fails on a query | Check the error; usually a typo in `sqlc.yaml` or a query |
 | `go vet` fails with `undefined: uuid` | Run `go mod tidy` after `sqlc generate` |
 | CI `sqlc diff` fails | Re-run `sqlc generate` and commit `internal/auth/store` |

@@ -15,3 +15,4 @@
 | 10 | [Vault on the VPS](10-vault-on-vps.md) | Oct 2026 |
 | 11 | [External Secrets Operator and Vault-backed secrets](11-external-secrets-vault.md) | Oct 2026 |
 | 12 | [M3: Two-factor authentication (TOTP)](12-TOTP-2FA.md) | Nov 2026 |
+| 13 | [M4: ForwardAuth and rate limiting](13-m4-forwardauth-rate-limiting.md) | in progress |
