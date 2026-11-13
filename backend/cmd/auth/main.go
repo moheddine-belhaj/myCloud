@@ -80,6 +80,21 @@ func newMux(api *auth.Handler, checks ...health.Checker) http.Handler {
 	return auth.Protect(mux)
 }
 
+// defaultInternalAddr is the cluster-only listener (INTERNAL_ADDR). The
+// Service exposes it as port "internal"; the Ingress never routes to it.
+const defaultInternalAddr = ":8081"
+
+// newInternalMux builds the router of the internal listener: only the
+// ForwardAuth endpoint that Traefik calls (M4). Probes, the public API and
+// everything else stay on the main listener.
+func newInternalMux(verify http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	// Any method: Traefik calls it with GET, and the method of the original
+	// request (X-Forwarded-Method) is what Verify checks.
+	mux.Handle("/verify", verify)
+	return mux
+}
+
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		slog.Error("auth failed", "err", err)
@@ -139,15 +154,29 @@ func serve() error {
 		svc.RunSessionCleanup(ctx, sessionCleanupEvery)
 	}()
 
+	api := auth.NewHandler(svc)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           newMux(auth.NewHandler(svc), database.Checker{Pool: pool}, migrator),
+		Handler:           newMux(api, database.Checker{Pool: pool}, migrator),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	internalAddr := os.Getenv("INTERNAL_ADDR")
+	if internalAddr == "" {
+		internalAddr = defaultInternalAddr
+	}
+	internal := &http.Server{
+		Addr:    internalAddr,
+		Handler: newInternalMux(http.HandlerFunc(api.Verify)),
+		// Traefik sends no body and keeps connections open between requests.
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	// Only the key ID is logged, never the key.
-	slog.Info("listening", "addr", cfg.Addr, "version", version, "totp_key_id", totpKeys.CurrentID())
-	return httpserver.Run(ctx, srv, cfg.ShutdownTimeout)
+	slog.Info("listening", "addr", cfg.Addr, "internal_addr", internalAddr, "version", version, "totp_key_id", totpKeys.CurrentID())
+	return httpserver.RunAll(ctx, cfg.ShutdownTimeout, srv, internal)
 }

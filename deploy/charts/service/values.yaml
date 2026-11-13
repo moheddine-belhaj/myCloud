@@ -11,6 +11,10 @@ image:
 replicas: 1
 port: 8080
 
+# Second, cluster-only port: the pod gets INTERNAL_ADDR and the Service a port
+# named "internal". The Ingress never routes to it. 0 = off.
+internalPort: 0
+
 # Secrets with registry credentials, e.g. [{name: ghcr-pull}].
 imagePullSecrets: []
 
