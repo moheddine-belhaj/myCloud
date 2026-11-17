@@ -1,0 +1,9 @@
+# Pods without their own NetworkPolicy accept no traffic (see ../README.md).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress

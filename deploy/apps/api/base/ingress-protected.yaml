@@ -1,0 +1,23 @@
+# /api/* behind ForwardAuth (M4). Middlewares come from the auth release; see README.md.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-protected
+  labels:
+    app.kubernetes.io/name: api
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: mycloud-prod-strip-identity@kubernetescrd,mycloud-prod-forwardauth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: cloud.mohedine.dev            # prod default; dev/qa override in the overlay
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  name: http

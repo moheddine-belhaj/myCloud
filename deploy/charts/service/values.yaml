@@ -44,6 +44,18 @@ ingress:
   enabled: false
   host: ""                 # cloud-dev.mohedine.dev, ...
   path: /                  # path prefix routed to this service
+  middlewares: []          # Traefik Middlewares in the same namespace, e.g. [strip-identity, forwardauth]
+
+# auth only: creates the Middlewares "forwardauth" and "strip-identity" (see README.md).
+forwardAuth:
+  provide: false
+
+# Ingress NetworkPolicy: only the Traefik pods may reach ports http and internal (see README.md).
+networkPolicy:
+  enabled: false
+  traefikNamespace: kube-system
+  traefikLabels:
+    app.kubernetes.io/name: traefik
 
 resources:
   requests: { cpu: 20m, memory: 32Mi }

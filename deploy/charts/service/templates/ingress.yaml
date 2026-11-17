@@ -7,6 +7,9 @@ metadata:
     {{- include "service.labels" . | nindent 4 }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web   # cloudflared talks plain HTTP inside the cluster
+    {{- if .Values.ingress.middlewares }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ include "service.middlewares" . }}
+    {{- end }}
 spec:
   ingressClassName: traefik
   rules:

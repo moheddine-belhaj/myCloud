@@ -1,0 +1,33 @@
+{{- /*
+Traefik Middlewares for M4 ForwardAuth, rendered by the auth release only
+(forwardAuth.provide). Any Ingress in the namespace can use them. See README.md.
+*/ -}}
+{{- if .Values.forwardAuth.provide }}
+{{- if not .Values.internalPort }}
+{{- fail "forwardAuth.provide needs internalPort (the port of GET /verify)" }}
+{{- end }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: forwardauth
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+spec:
+  forwardAuth:
+    address: http://{{ include "service.name" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.internalPort }}/verify
+    authResponseHeaders:
+      - X-User-Id
+      - X-User-Role
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-identity
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+spec:
+  headers:
+    customRequestHeaders:
+      X-User-Id: ""
+      X-User-Role: ""
+{{- end }}

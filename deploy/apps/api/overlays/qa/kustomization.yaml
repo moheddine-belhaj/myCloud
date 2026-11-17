@@ -18,3 +18,13 @@ patches:
   target:
     kind: Ingress
     name: api
+- patch: |-
+    - op: replace
+      path: /spec/rules/0/host
+      value: cloud-qa.mohedine.dev
+    - op: replace
+      path: /metadata/annotations/traefik.ingress.kubernetes.io~1router.middlewares
+      value: mycloud-qa-strip-identity@kubernetescrd,mycloud-qa-forwardauth@kubernetescrd
+  target:
+    kind: Ingress
+    name: api-protected

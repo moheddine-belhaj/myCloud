@@ -17,3 +17,11 @@ app.kubernetes.io/version: {{ .Values.image.tag | quote }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 env: {{ required "environment is required" .Values.environment }}
 {{- end -}}
+
+{{/* Value of traefik.ingress.kubernetes.io/router.middlewares: <namespace>-<name>@kubernetescrd, comma separated. */}}
+{{- define "service.middlewares" -}}
+{{- $ns := .Release.Namespace -}}
+{{- range $i, $m := .Values.ingress.middlewares -}}
+{{- if $i }},{{ end }}{{ $ns }}-{{ $m }}@kubernetescrd
+{{- end -}}
+{{- end -}}
