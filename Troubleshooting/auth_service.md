@@ -432,6 +432,50 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cloud-dev.mohedine.dev/verify  
 
 Until PR 2 adds NetworkPolicies, any pod in the cluster can reach port 8081. It only answers "is this cookie valid", so it grants nothing on its own.
 
+## M4 PR 2: ForwardAuth through Traefik and NetworkPolicies
+
+Check the assumptions the policies make (labels and the CRD):
+
+```bash
+k -n kube-system get pods -l app.kubernetes.io/name=traefik          # must list the Traefik pod
+k get crd middlewares.traefik.io
+k -n mycloud-dev get middleware                                        # forwardauth, strip-identity
+k -n mycloud-dev get networkpolicy                                     # auth, api, db, default-deny-ingress
+k -n mycloud-dev get pods                                              # all Running and READY
+k -n mycloud-dev get cluster db                                        # Cluster in healthy state
+```
+
+Test through the real Traefik (Cloudflare Access is not in the way):
+
+```bash
+k -n kube-system port-forward svc/traefik 8000:80
+H='Host: cloud-dev.mohedine.dev'
+TOK=<session token from Postman (adminToken) or from a login>
+
+curl -s -H "$H" -H "Cookie: __Host-session=$TOK" localhost:8000/api/whoami         # 200 {"userId":…,"role":…}
+curl -s -H "$H" localhost:8000/api/whoami                                           # 401 unauthenticated (from auth)
+curl -s -H "$H" -H 'X-User-Id: 00000000-0000-0000-0000-000000000000' \
+     -H 'X-User-Role: admin' localhost:8000/api/whoami                              # 401: forged headers alone get nothing
+curl -s -H "$H" -H "Cookie: __Host-session=$TOK" -H 'X-User-Role: admin' \
+     localhost:8000/api/whoami                                                       # role from the session, not the header
+curl -s -X POST -H "$H" -H "Cookie: __Host-session=$TOK" -H 'Sec-Fetch-Site: cross-site' \
+     localhost:8000/api/whoami                                                       # 403 cross_origin
+curl -s -H "$H" -H "Cookie: __Host-session=$TOK" localhost:8000/api/auth/me         # auth still works through Traefik
+```
+
+Prove the NetworkPolicy (a pod outside the namespace must time out):
+
+```bash
+k run np-test --rm -it --restart=Never -n default --image=curlimages/curl -- \
+  curl -sS -m 3 http://api.mycloud-dev.svc.cluster.local/healthz
+# curl: (28) Connection timed out  → blocked, as intended
+k run np-test --rm -it --restart=Never -n default --image=curlimages/curl -- \
+  curl -sS -m 3 http://auth.mycloud-dev.svc.cluster.local:8081/verify
+# timed out as well
+```
+
+When dev passes: set `networkPolicy.enabled: true` in `deploy/services/auth/{qa,prod}/values.yaml`, add `components: [../../components/network-policy]` to the qa/prod overlays of api and postgres, and add `deploy/apps/baseline/overlays/{qa,prod}`. Promote auth to qa/prod before that.
+
 ## Connect to the database by hand
 
 **SQL shell inside the database pod** (superuser, no password; on prod use the primary,
@@ -503,6 +547,12 @@ unset PGPASSWORD
 | `verify` gives `X-User-Role: user` for an admin | Expected until the admin turns on 2FA: the effective role is `admin` only with 2FA, like `RequireAdmin` |
 | auth exits at start: `listen tcp :8081: bind: address already in use` | Locally another process uses 8081: set `INTERNAL_ADDR=:8091` |
 | `port-forward` fails for 8081 | The pod still runs an image without the internal listener: check the tag and `k -n mycloud-dev rollout status deploy/auth` |
+| `/api/whoami` returns `404` through Traefik | api still runs an image without the route (check the tag), or the Ingress `api-protected` is missing: `k -n mycloud-dev get ingress` |
+| Every `/api/*` request returns `500` or `404` after the merge | Traefik can't find the Middleware: names must be `mycloud-<env>-forwardauth@kubernetescrd`; `k -n mycloud-dev get middleware`, `k -n kube-system logs deploy/traefik | grep -i middleware` |
+| `/api/*` in qa/prod gives `500` | auth there is older than M4 PR 1 and has no `:8081/verify`: promote auth |
+| Pods become `0/1 Ready` after the policies | Probes blocked: the node must reach the pods. Check `k -n mycloud-dev describe pod <pod>`; as a quick fix remove `baseline-dev` and tell the policies about the node IPs |
+| auth `/readyz` fails, log `connect: connection timed out` to `db-rw` | The db policy doesn't match auth: check `k -n mycloud-dev get pods --show-labels` (auth must have `app.kubernetes.io/name=auth`) |
+| Traefik gets `504` / timeouts to auth or api | The Traefik label differs: `k -n kube-system get pods --show-labels`, then fix `networkPolicy.traefikLabels` and the api/postgres components |
 | `sqlc generate` fails on a query | Check the error; usually a typo in `sqlc.yaml` or a query |
 | `go vet` fails with `undefined: uuid` | Run `go mod tidy` after `sqlc generate` |
 | CI `sqlc diff` fails | Re-run `sqlc generate` and commit `internal/auth/store` |
