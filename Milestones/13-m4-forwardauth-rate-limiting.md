@@ -18,7 +18,7 @@ sequenceDiagram
   Note over S: NetworkPolicy: only Traefik may connect
 ```
 
-## PR 1: internal verify endpoint (auth)
+## PR 1: internal verify endpoint (auth) ✅
 1. `GET /verify` on a second, cluster-only listener (`INTERNAL_ADDR`, port `8081`); the public router and the Ingress never serve it.
 2. Valid `__Host-session` cookie: `200` with `X-User-Id` and `X-User-Role`, no body. No or expired session: `401 unauthenticated`. Database error: `500`, so access fails closed.
 3. `X-User-Role` is the effective role: `admin` only with 2FA on, the same rule as `RequireAdmin`.
@@ -29,13 +29,14 @@ sequenceDiagram
 Done when: in dev, `curl` to `auth:8081/verify` with a session cookie returns 200 and the identity headers, without one 401, and `https://cloud-dev.mohedine.dev/verify` is not routed to auth.
 
 ## PR 2: Traefik ForwardAuth and the trust boundary
-1. Traefik `Middleware` `forwardauth` → `http://auth.mycloud-<env>.svc.cluster.local:8081/verify`, `authResponseHeaders: [X-User-Id, X-User-Role]`.
-2. A `headers` middleware that removes client-sent `X-User-*` before ForwardAuth, so nobody can fake an identity.
-3. Protected Ingresses (api, later space/upload/file) use both middlewares; public auth routes (login, register) do not.
-4. `NetworkPolicy` per namespace: services accept traffic only from Traefik (kube-system) and their own probes; auth's port 8081 only from Traefik.
-5. `GET /api/whoami` in api: echoes the trusted headers, to prove the chain end to end.
+1. The auth release creates the Traefik Middlewares `forwardauth` (→ `http://auth.mycloud-<env>.svc.cluster.local:8081/verify`, `authResponseHeaders: [X-User-Id, X-User-Role]`) and `strip-identity` (deletes client-sent `X-User-*`).
+2. api: second Ingress `api-protected` on `/api` with `strip-identity` then `forwardauth`; `/` stays public. auth's own Ingress uses only `strip-identity`, so login and register work without a session.
+3. `backend/internal/identity`: `FromRequest`, `Require` (401 without headers, fails closed), `FromContext`; auth's `/verify` uses the same header names.
+4. `GET /api/whoami` in api: echoes the trusted identity, to prove the chain end to end.
+5. NetworkPolicies: auth and api accept ingress only from the Traefik pods; the CNPG pods only from auth, api, each other and the CNPG operator; new app `baseline` denies all other ingress.
+6. Rollout: NetworkPolicies and `baseline` only in dev; the middlewares and `whoami` in every environment (promote auth to qa/prod first, older images have no `/verify`).
 
-Done when: `/api/whoami` returns the logged-in user, a forged `X-User-Id` is ignored, and a pod in another namespace can't reach api directly.
+Done when: in dev `/api/whoami` returns the logged-in user, no cookie gives `401`, a forged `X-User-Role` is ignored, a cross-site POST gives `403`, a pod in another namespace can't reach api, and all pods stay Ready. Then the same NetworkPolicies are switched on for qa and prod.
 
 ## PR 3: rate limiting in three layers
 1. Cloudflare rate-limiting rule on `/api/auth/login*` and `/api/auth/register` (blocks floods before they reach the home line).

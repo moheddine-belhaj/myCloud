@@ -13,10 +13,15 @@ database:
 ingress:
   enabled: true
   path: /api/auth
+  middlewares: [strip-identity]   # no forwardauth: login and register work without a session
 
 # M4: ForwardAuth endpoint GET /verify for Traefik, on its own port.
 # In the cluster: http://auth.mycloud-<env>.svc.cluster.local:8081/verify
 internalPort: 8081
+
+# M4: auth creates the forwardauth and strip-identity Middlewares for its namespace.
+forwardAuth:
+  provide: true
 
 # M3: AES-256 key that encrypts TOTP seeds, from Vault (secret/mycloud/<env>/auth-totp, key "key").
 externalSecrets:

@@ -3,6 +3,8 @@ kind: Kustomization
 namespace: mycloud-dev
 resources:
 - ../../base
+components:
+- ../../components/network-policy   # M4 PR 2: dev first, qa and prod after testing
 labels:
 - pairs:
     env: dev
@@ -18,3 +20,13 @@ patches:
   target:
     kind: Ingress
     name: api
+- patch: |-
+    - op: replace
+      path: /spec/rules/0/host
+      value: cloud-dev.mohedine.dev
+    - op: replace
+      path: /metadata/annotations/traefik.ingress.kubernetes.io~1router.middlewares
+      value: mycloud-dev-strip-identity@kubernetescrd,mycloud-dev-forwardauth@kubernetescrd
+  target:
+    kind: Ingress
+    name: api-protected

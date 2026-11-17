@@ -6,3 +6,5 @@ ingress:
   host: cloud-dev.mohedine.dev
 env:
   TOTP_ISSUER: "MyCloud dev" # account title in authenticator apps
+networkPolicy:
+  enabled: true # M4 PR 2: dev first, qa and prod after testing
