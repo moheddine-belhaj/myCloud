@@ -3,14 +3,14 @@ package auth
 import (
 	"errors"
 	"net/http"
+
+	"github.com/moheddine-belhaj/mycloud/backend/internal/identity"
 )
 
-// Identity headers set by Verify. Traefik copies them onto the request it
-// passes to the protected service (ForwardAuth "authResponseHeaders"), so a
-// service behind it knows who is calling without touching the session table.
+// Identity headers set by Verify, shared with the services through package identity.
 const (
-	HeaderUserID   = "X-User-Id"
-	HeaderUserRole = "X-User-Role"
+	HeaderUserID   = identity.HeaderUserID
+	HeaderUserRole = identity.HeaderUserRole
 )
 
 // Verify is the ForwardAuth endpoint (M4). Traefik calls it before every

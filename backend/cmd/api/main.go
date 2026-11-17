@@ -15,6 +15,7 @@ import (
 	"github.com/moheddine-belhaj/mycloud/backend/internal/database"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/health"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/httpserver"
+	"github.com/moheddine-belhaj/mycloud/backend/internal/identity"
 )
 
 // version is overwritten at build time by the linker:
@@ -33,7 +34,16 @@ func newMux(checks ...health.Checker) *http.ServeMux {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"version": version})
 	})
+	mux.Handle("GET /api/whoami", identity.Require(http.HandlerFunc(whoami)))
 	return mux
+}
+
+// whoami returns the caller identity that Traefik ForwardAuth attached (M4).
+func whoami(w http.ResponseWriter, r *http.Request) {
+	id, _ := identity.FromContext(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(id)
 }
 
 func main() {
