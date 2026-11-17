@@ -4,14 +4,14 @@ namespace: mycloud-dev
 resources:
 - ../../base
 components:
-- ../../components/network-policy   # M4 PR 2: dev first, qa and prod after testing
+- ../../components/network-policy
 labels:
 - pairs:
     env: dev
 images:
 - name: mycloud-api
   newName: ghcr.io/moheddine-belhaj/mycloud-api
-  newTag: sha-e5f2842
+  newTag: sha-9451e65
 patches:
 - patch: |-
     - op: replace
