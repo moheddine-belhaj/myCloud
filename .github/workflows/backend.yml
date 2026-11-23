@@ -106,6 +106,21 @@ jobs:
             kubeconform -strict -summary -ignore-missing-schemas - <<<"$out"
             echo "::endgroup::"
           done
+      - name: Lint, render and validate Helm data services
+        run: |
+          set -euo pipefail
+          for d in deploy/data/*/*/; do
+            name=$(basename "$(dirname "$d")"); env=$(basename "$d")
+            echo "::group::$name/$env"
+            args=(-f "deploy/data/$name/values.yaml" -f "${d}values.yaml")
+            helm lint "deploy/charts/$name" "${args[@]}"
+            out=$(helm template "$name" "deploy/charts/$name" -n "mycloud-$env" "${args[@]}")
+            if grep -qE '^kind:[[:space:]]*Secret[[:space:]]*$' <<<"$out"; then
+              echo "::error::$name/$env renders a kind: Secret"; exit 1
+            fi
+            kubeconform -strict -summary -ignore-missing-schemas - <<<"$out"
+            echo "::endgroup::"
+          done
 
   build:
     needs: [test, validate-manifests]
