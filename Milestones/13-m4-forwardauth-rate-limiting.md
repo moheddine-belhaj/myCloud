@@ -1,6 +1,6 @@
 # 13 · M4: ForwardAuth and rate limiting
 
-Goal: Traefik checks the session once at the edge and passes a trusted identity to every service; login and API traffic is rate limited in three layers.
+Goal: Traefik checks the session once at the edge and passes a trusted identity to every service; login and API traffic is rate limited in three layers (Cloudflare, Traefik, auth with Redis). Four PRs.
 
 ```mermaid
 sequenceDiagram
@@ -28,7 +28,7 @@ sequenceDiagram
 
 Done when: in dev, `curl` to `auth:8081/verify` with a session cookie returns 200 and the identity headers, without one 401, and `https://cloud-dev.mohedine.dev/verify` is not routed to auth.
 
-## PR 2: Traefik ForwardAuth and the trust boundary
+## PR 2: Traefik ForwardAuth and the trust boundary ✅
 1. The auth release creates the Traefik Middlewares `forwardauth` (→ `http://auth.mycloud-<env>.svc.cluster.local:8081/verify`, `authResponseHeaders: [X-User-Id, X-User-Role]`) and `strip-identity` (deletes client-sent `X-User-*`).
 2. api: second Ingress `api-protected` on `/api` with `strip-identity` then `forwardauth`; `/` stays public. auth's own Ingress uses only `strip-identity`, so login and register work without a session.
 3. `backend/internal/identity`: `FromRequest`, `Require` (401 without headers, fails closed), `FromContext`; auth's `/verify` uses the same header names.
@@ -38,14 +38,22 @@ Done when: in dev, `curl` to `auth:8081/verify` with a session cookie returns 20
 
 Done when: in dev `/api/whoami` returns the logged-in user, no cookie gives `401`, a forged `X-User-Role` is ignored, a cross-site POST gives `403`, a pod in another namespace can't reach api, and all pods stay Ready. Then the same NetworkPolicies are switched on for qa and prod.
 
-## PR 3: rate limiting in three layers
-1. Cloudflare rate-limiting rule on `/api/auth/login*` and `/api/auth/register` (blocks floods before they reach the home line).
-2. Traefik `RateLimit` middleware on `/api/*`, keyed on `CF-Connecting-IP` (otherwise every request looks like cloudflared).
-3. auth: failed-login limit per account and per IP, stored in Postgres; the 5-attempt limit per 2FA challenge stays.
-4. Clear `429` responses with `Retry-After`; log lockouts with `slog`, never passwords.
+## PR 3: Redis per environment
+1. Own Helm chart `deploy/charts/redis` (official `redis:8.2-alpine`): Deployment (1 replica, `Recreate`), Service, ConfigMap `redis.conf`, ExternalSecret, NetworkPolicy.
+2. No persistence (`save ""`, `appendonly no`): rate-limit counters may be lost on restart. `maxmemory 64mb`, `volatile-ttl`.
+3. Access control: Vault `secret/mycloud/<env>/redis` (`password`) → ESO renders the ACL file. User `default` is off; user `auth` may only use keys `rl:*` and the commands the limiter needs. Redis only stores the SHA-256 of the password.
+4. NetworkPolicy: only auth pods may reach port 6379 (on in every environment from the start).
+5. Hardened like the services: non-root (uid 999), read-only root filesystem, no capabilities, no service account token, TCP probes.
+6. New ApplicationSet `mycloud-data` (`deploy/data/<name>/<env>` → chart `deploy/charts/<name>`), apps `redis-dev`, `redis-qa`, `redis-prod`; CI lints and validates the data charts.
 
-Done when: the 11th request per second from one IP gets 429, the 6th wrong password in 15 minutes locks the account for up to 15 minutes, and normal use is unaffected.
+Done when: `redis-<env>` is Healthy in Argo CD, `PING` as user `auth` returns `PONG`, the default user and forbidden commands are refused, and a pod outside the namespace can't connect.
 
-Open decisions: counters in Postgres (now) vs Redis (later); limit values (about 10 req/s per IP, 5 failed logins per 15 min); lock vs delay (lock up to 15 min with a clear message).
+## PR 4: rate limiting in three layers
+1. auth + Redis: failed logins per account+IP (5 per 15 min), per IP (20 per 15 min) and per account (50 per hour); failed 2FA codes count too. Check before argon2, `429 too_many_attempts` + `Retry-After`, counter deleted on success. Fail open if Redis is down (logged).
+2. Traefik `RateLimit` middleware (token bucket, 10 req/s, burst 20) keyed on `CF-Connecting-IP`, first in the chain: `ratelimit → strip-identity → forwardauth`.
+3. Cloudflare rate-limiting rule on `/api/auth/login*` and `/api/auth/register` (dashboard, settings documented).
+4. Lockouts logged with `slog` (IP, user ID), never emails or passwords.
+
+Done when: 5 wrong passwords give `429` with `Retry-After`, the right password stays blocked until the lock expires, a burst from one IP gets Traefik's `429`, login still works with Redis scaled to 0, and normal use is unaffected.
 
 Result: one place decides who is logged in, services can't be reached around it, and brute force is slowed down at every layer.

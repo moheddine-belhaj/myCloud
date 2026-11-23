@@ -11,7 +11,9 @@ setup, all built and run from a home lab.
 
 > **Status:** early development. The CI/CD pipeline, a minimal Go API (`/healthz`, `/readyz`,
 > `/version`), CloudNativePG Postgres, Vault-backed secrets and the first part of the auth service
-> (invite registration, login, logout, sessions, admin invites, TOTP 2FA with recovery codes) are in place. Features are added phase by phase (see [Roadmap](#roadmap)).
+> (invite registration, login, logout, sessions, admin invites, TOTP 2FA with recovery codes) are in place.
+> ForwardAuth (trusted identity at the edge) is done; a per-environment Redis is deployed and
+> three-layer rate limiting (Cloudflare, Traefik, auth + Redis) is in progress. Features are added phase by phase (see [Roadmap](#roadmap)).
 
 ## Tech stack
 
@@ -21,7 +23,7 @@ setup, all built and run from a home lab.
 | Frontend | React + TypeScript (Vite), TanStack Query, React Router, Uppy for resumable uploads |
 | Database | PostgreSQL (CloudNativePG operator) for metadata |
 | File storage | Garage (S3-compatible object storage) |
-| Cache / sessions | Redis |
+| Cache / rate limits | Redis (own Helm chart, ACL user, no persistence), used for login rate-limit counters; sessions later |
 | Events | NATS JetStream |
 | Uploads | tus protocol (resumable, chunked uploads) |
 | File processing | ClamAV (malware scan), libvips (images), FFmpeg (video), pdftoppm (PDF) |
@@ -31,7 +33,8 @@ setup, all built and run from a home lab.
 | Registry | GitHub Container Registry (GHCR, private) |
 | CD | Argo CD + Kustomize (GitOps) |
 | Secrets | HashiCorp Vault (self-hosted on a VPS) + External Secrets Operator |
-| Networking | Cloudflare (DNS, WAF, Tunnel), Tailscale (admin access) |
+| Networking | Cloudflare (DNS, WAF, Tunnel, rate-limit rule), Tailscale (admin access) |
+| Edge auth / limits | Traefik ForwardAuth, `RateLimit` and strip-identity middlewares, NetworkPolicies |
 | Observability (planned) | Prometheus, Grafana, Loki, Tempo, OpenTelemetry |
 
 ## Architecture
@@ -45,7 +48,7 @@ flowchart LR
         T --> API[Go API]
         API --> PG[(PostgreSQL)]
         API --> S3[(Garage S3)]
-        API --> R[(Redis)]
+        API --> R[(Redis<br/>rate limits)]
         API --> N{{NATS}}
         N --> W[Workers<br/>scan · media · docs]
         W --> S3
@@ -58,6 +61,9 @@ flowchart LR
 - **Files** are stored in object storage under ID-based keys, never under user-supplied names.
 - **Uploads** are split into chunks below Cloudflare's 100 MB request limit and can resume after an
   interruption.
+- **Rate limiting in three layers:** a Cloudflare rule on login/register, a Traefik `RateLimit`
+  middleware per client IP, and failed-login counters (per account+IP, per IP, per account) in Redis
+  inside the auth service. Redis is reachable only from auth pods and the limiter fails open if Redis is down.
 - **Every upload is scanned** for malware before it becomes available.
 
 ## Project structure
@@ -69,7 +75,8 @@ myCloud/
 │   ├── config/                configuration from environment variables
 │   ├── internal/
 │   │   ├── health/            /healthz and /readyz probes
-│   │   ├── auth/              register, login, sessions   (2FA planned)
+│   │   ├── auth/              register, login, sessions, TOTP 2FA
+│   │   ├── identity/          trusted X-User-Id from ForwardAuth
 │   │   ├── user/              user accounts               (planned)
 │   │   ├── space/             spaces and quota            (planned)
 │   │   ├── file/              file metadata and downloads (planned)
@@ -79,9 +86,10 @@ myCloud/
 │   └── Dockerfile
 ├── deploy/
 │   ├── apps/                  Kustomize apps: api/, postgres/ (base + dev/qa/prod overlays)
-│   ├── charts/service/        generic Helm chart for Go services
+│   ├── charts/                Helm charts: service/ (generic, Go services), redis/
+│   ├── data/                  per-env values for data services with their own chart (redis/)
 │   ├── services/              per-service, per-env Helm values (auth/)
-│   ├── argocd/                Argo CD install, projects, ApplicationSets
+│   ├── argocd/                Argo CD install, projects, ApplicationSets (apps, services, data)
 │   └── platform/              cloudflared tunnel, External Secrets store
 ├── infra/                     Ansible: Vault on a VPS (config, snapshots)
 └── .github/workflows/
@@ -159,14 +167,15 @@ docker run --rm -p 8080:8080 mycloud-api:local
 |---|-------|--------|
 | 0 | Platform: k3s cluster, Traefik, Cloudflare Tunnel, Tailscale | In progress |
 | 1 | GitOps: CI, GHCR, Argo CD, dev/qa/prod | In progress |
-| 2 | Data layer: PostgreSQL, Garage, Redis, NATS, backups | In progress |
-| 3 | Auth: invite registration, login, 2FA | In progress |
-| 4 | Spaces and quotas | Planned |
-| 5 | File upload, listing and download | Planned |
-| 6 | Processing pipeline: malware scan, thumbnails, previews | Planned |
-| 7 | Security hardening | Planned |
-| 8 | Observability: metrics, logs, tracing | Planned |
-| 9 | Extras: share links, search, video streaming | Planned |
+| 2 | Data layer: PostgreSQL, Redis (done, per env), Garage, NATS, backups | In progress |
+| 3 | Auth: invite registration, login, 2FA, ForwardAuth | In progress |
+| 4 | Rate limiting: Redis, Traefik, Cloudflare, auth lockouts | In progress |
+| 5 | Spaces and quotas | Planned |
+| 6 | File upload, listing and download | Planned |
+| 7 | Processing pipeline: malware scan, thumbnails, previews | Planned |
+| 8 | Security hardening | Planned |
+| 9 | Observability: metrics, logs, tracing | Planned |
+| 10 | Extras: share links, search, video streaming | Planned |
 
 ## Author
 
