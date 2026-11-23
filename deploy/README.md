@@ -3,8 +3,9 @@
 Everything Kubernetes, applied by Argo CD (nothing is applied by hand).
 
 - `apps/` – Kustomize apps (base + per-env overlays): `api` (hello-world API) and `postgres` (CNPG cluster + roles).
-- `charts/` – our generic Helm chart `service` for Go services.
+- `charts/` – our Helm charts: `service` (generic, for Go services) and `redis`.
 - `services/` – values files per service/env that feed the chart (e.g. `auth`).
+- `data/` – values files per data service/env for their own chart (e.g. `redis`).
 - `argocd/` – Argo CD install, projects and the ApplicationSets that create the apps.
 - `platform/` – shared cluster components (Cloudflare tunnel, External Secrets store).
 

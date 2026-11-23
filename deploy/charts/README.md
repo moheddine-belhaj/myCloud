@@ -1,3 +1,6 @@
 # charts
 
-Helm charts I write myself. Currently one: `service/`, the generic chart used by every Go service.
+Helm charts I write myself.
+
+- `service/` – the generic chart used by every Go service (values in `deploy/services/`).
+- `redis/` – Redis for the rate-limit counters (values in `deploy/data/redis/`).
