@@ -1,0 +1,41 @@
+# Defaults for every environment; deploy/data/redis/<env>/values.yaml overrides. See README.md.
+environment: ""            # dev | qa | prod (required)
+
+image:
+  repository: redis
+  tag: "8.2-alpine"
+
+maxmemory: 64mb
+maxmemoryPolicy: volatile-ttl   # every rate-limit key has a TTL: evict the one that expires soonest
+
+# Vault path with key "password" (64 hex chars). Redis only gets its SHA-256 in the ACL file.
+vaultPath: "mycloud/{{ .Values.environment }}/redis"
+
+# ACL user for auth: key prefix and allowed commands (see README.md).
+aclUser:
+  name: auth
+  keys: "rl:*"
+  commands: "-@all +@connection -@dangerous +get +incr +expire +ttl +pttl +del +exists +multi +exec +discard"
+
+networkPolicy:
+  enabled: true
+  allowFrom:                       # pods (same namespace) that may connect to port 6379
+    - app.kubernetes.io/name: auth
+
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits: { memory: 128Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 999                   # user "redis" in the official image
+  runAsGroup: 1000
+  fsGroup: 1000                    # lets that group read the mounted ACL Secret
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

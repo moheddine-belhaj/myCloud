@@ -1,0 +1,2 @@
+# Redis in qa. Shared settings: ../values.yaml and charts/redis/values.yaml.
+environment: qa

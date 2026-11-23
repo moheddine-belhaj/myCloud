@@ -1,0 +1,2 @@
+# Redis in dev. Shared settings: ../values.yaml and charts/redis/values.yaml.
+environment: dev

@@ -1,0 +1,42 @@
+# Data services with their own chart: one app per deploy/data/<name>/<env>, chart deploy/charts/<name>.
+# Apply once by hand: k apply -f deploy/argocd/applicationset-data.yaml (see README.md).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: mycloud-data
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/moheddine-belhaj/myCloud.git
+        revision: main
+        directories:
+          - path: deploy/data/*/*
+  template:
+    metadata:
+      name: '{{ index .path.segments 2 }}-{{ .path.basename }}'
+    spec:
+      project: mycloud
+      sources:
+        - repoURL: https://github.com/moheddine-belhaj/myCloud.git
+          targetRevision: main
+          path: 'deploy/charts/{{ index .path.segments 2 }}'
+          helm:
+            releaseName: '{{ index .path.segments 2 }}'
+            valueFiles:
+              - '$values/deploy/data/{{ index .path.segments 2 }}/values.yaml'
+              - '$values/{{ .path.path }}/values.yaml'
+        - repoURL: https://github.com/moheddine-belhaj/myCloud.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'mycloud-{{ .path.basename }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

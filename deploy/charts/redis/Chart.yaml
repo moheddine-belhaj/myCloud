@@ -1,0 +1,6 @@
+apiVersion: v2
+name: redis
+description: Redis for MyCloud rate-limit counters (no persistence, ACL user per client)
+type: application
+version: 0.1.0
+appVersion: "8.2"

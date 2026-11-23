@@ -1,0 +1,2 @@
+# Redis for all environments (rate-limit counters of auth, M4). Chart: deploy/charts/redis.
+maxmemory: 64mb

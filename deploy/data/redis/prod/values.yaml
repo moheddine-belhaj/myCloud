@@ -1,0 +1,2 @@
+# Redis in prod. Shared settings: ../values.yaml and charts/redis/values.yaml.
+environment: prod
