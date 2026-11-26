@@ -3,6 +3,8 @@ kind: Kustomization
 namespace: mycloud-prod
 resources:
 - ../../base
+components:
+- ../../components/network-policy
 labels:
 - pairs:
     env: prod
