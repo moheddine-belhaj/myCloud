@@ -3,6 +3,8 @@ kind: Kustomization
 namespace: mycloud-qa
 resources:
 - ../../base
+components:
+- ../../components/network-policy
 labels:
 - pairs:
     env: qa
