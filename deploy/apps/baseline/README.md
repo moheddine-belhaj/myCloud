@@ -16,4 +16,4 @@ A new service needs its own allow policy, otherwise nothing can reach it. For a 
 
 ## Rollout
 
-Only `overlays/dev` exists. After the checks in `Troubleshooting/auth_service.md` (M4 PR 2) pass in dev, add `overlays/qa` and `overlays/prod` (copy dev, change the namespace and `env`) together with the qa/prod switches of the allow policies.
+`overlays/dev` and `overlays/qa` exist. After the checks in `Troubleshooting/auth_service.md` (M4 PR 2) pass in qa, add `overlays/prod` (copy qa, change the namespace and `env`) together with the prod switches of the allow policies.

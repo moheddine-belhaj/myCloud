@@ -6,3 +6,5 @@ ingress:
   host: cloud-qa.mohedine.dev
 env:
   TOTP_ISSUER: "MyCloud qa" # account title in authenticator apps
+networkPolicy:
+  enabled: true # only Traefik may reach auth (M4)

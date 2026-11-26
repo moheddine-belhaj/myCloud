@@ -4,5 +4,7 @@ namespace: mycloud-qa
 resources:
   - ../../base
   - external-secret.yaml   # auth-db from Vault
+components:
+  - ../../components/network-policy
 labels:
   - pairs: { env: qa }
