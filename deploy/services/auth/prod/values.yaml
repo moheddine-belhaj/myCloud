@@ -5,3 +5,5 @@ image:
 replicas: 2
 ingress:
   host: cloud.mohedine.dev
+networkPolicy:
+  enabled: true # only Traefik may reach auth (M4)

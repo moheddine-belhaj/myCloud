@@ -34,7 +34,7 @@ Done when: in dev, `curl` to `auth:8081/verify` with a session cookie returns 20
 3. `backend/internal/identity`: `FromRequest`, `Require` (401 without headers, fails closed), `FromContext`; auth's `/verify` uses the same header names.
 4. `GET /api/whoami` in api: echoes the trusted identity, to prove the chain end to end.
 5. NetworkPolicies: auth and api accept ingress only from the Traefik pods; the CNPG pods only from auth, api, each other and the CNPG operator; new app `baseline` denies all other ingress.
-6. Rollout: NetworkPolicies and `baseline` only in dev; the middlewares and `whoami` in every environment (promote auth to qa/prod first, older images have no `/verify`).
+6. Rollout: middlewares and `whoami` in every environment; NetworkPolicies and `baseline` one environment at a time (dev → qa → prod), now active everywhere.
 
 Done when: in dev `/api/whoami` returns the logged-in user, no cookie gives `401`, a forged `X-User-Role` is ignored, a cross-site POST gives `403`, a pod in another namespace can't reach api, and all pods stay Ready. Then the same NetworkPolicies are switched on for qa and prod.
 

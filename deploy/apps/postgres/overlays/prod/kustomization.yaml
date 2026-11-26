@@ -4,6 +4,8 @@ namespace: mycloud-prod
 resources:
   - ../../base
   - external-secret.yaml   # auth-db from Vault (was a SOPS generator)
+components:
+  - ../../components/network-policy
 labels:
   - pairs: { env: prod }
 patches:
