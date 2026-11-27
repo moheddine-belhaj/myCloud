@@ -23,6 +23,7 @@ import (
 	"github.com/moheddine-belhaj/mycloud/backend/internal/database"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/health"
 	"github.com/moheddine-belhaj/mycloud/backend/internal/httpserver"
+	"github.com/redis/go-redis/v9"
 )
 
 // version is set at build time: -ldflags "-X main.version=sha-abc1234".
@@ -37,7 +38,28 @@ const usage = `usage:
   auth create-admin --email EMAIL < password    create an admin account
   auth create-invite [--ttl 168h]               print a new invite code
   auth reset-2fa --email EMAIL                  remove 2FA from an account
+  auth unlock --email EMAIL [--ip IP]           clear failed-login locks
 `
+
+// newLimiter connects to Redis for failed-login counters (M4); without REDIS_ADDR rate limiting is off.
+// The client fails fast and never retries, so a Redis outage adds little latency (see internal/auth/README.md#rate-limiting).
+func newLimiter(getenv func(string) string) (*auth.Limiter, func()) {
+	addr := getenv("REDIS_ADDR")
+	if addr == "" {
+		return nil, func() {}
+	}
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         addr,
+		Username:     getenv("REDIS_USER"),
+		Password:     getenv("REDIS_PASSWORD"),
+		DialTimeout:  500 * time.Millisecond,
+		ReadTimeout:  300 * time.Millisecond,
+		WriteTimeout: 300 * time.Millisecond,
+		MaxRetries:   -1,
+		PoolSize:     10,
+	})
+	return auth.NewLimiter(rdb), func() { _ = rdb.Close() }
+}
 
 // sessionCleanupEvery is how often expired sessions are deleted.
 const sessionCleanupEvery = time.Hour
@@ -111,7 +133,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	case "serve":
 		slog.SetDefault(slog.New(slog.NewJSONHandler(stdout, nil)).With("service", "auth"))
 		return serve()
-	case "create-admin", "create-invite", "reset-2fa":
+	case "create-admin", "create-invite", "reset-2fa", "unlock":
 		// Logs go to stderr so stdout only carries the command's result.
 		slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, nil)).With("service", "auth", "command", cmd))
 		return runCLI(cmd, args, stdin, stdout, stderr)
@@ -154,7 +176,12 @@ func serve() error {
 		svc.RunSessionCleanup(ctx, sessionCleanupEvery)
 	}()
 
-	api := auth.NewHandler(svc)
+	limiter, closeLimiter := newLimiter(os.Getenv)
+	defer closeLimiter()
+	if limiter == nil {
+		slog.Warn("rate limiting off: REDIS_ADDR is empty")
+	}
+	api := auth.NewHandler(svc).WithLimiter(limiter)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           newMux(api, database.Checker{Pool: pool}, migrator),
