@@ -4,6 +4,8 @@ The auth service: handlers, business logic and its database layer. Includes TOTP
 
 - `http.go` – routes: `POST /api/auth/register` (invite code), `POST /api/auth/login` (answers `{"mfaRequired":true}` and sets the `__Host-mfa` cookie when 2FA is on), `POST /api/auth/login/totp` (second step: TOTP or recovery code), `POST /api/auth/logout`, `GET /api/auth/me` (needs a session), `POST /api/auth/invites` (admin only, needs 2FA), `POST /api/auth/2fa/setup|enable|disable`, `POST /api/auth/2fa/recovery-codes` (replaces the 10 codes; needs a current app code).
 - `verify.go` – `Verify`, the ForwardAuth endpoint for Traefik (M4), served only on the internal listener (`:8081/verify`): session cookie → `200` + `X-User-Id`/`X-User-Role` (admin only with 2FA), `401` without a session, `403` for cross-site writes, `500` fails closed.
+- `ratelimit.go` – `Limiter`: failed-login counters in Redis (M4), see [Rate limiting](#rate-limiting).
+- `clientip.go` – `ClientIP`: the caller's address from `CF-Connecting-IP` (IPv6 grouped by /64).
 - `service.go` – business logic: register, login, logout, invites, `CreateAdmin`, and the hourly cleanup of expired sessions and expired 2FA challenges. `Login` returns `*MFARequiredError` (not a failure) when 2FA is on.
 - `session.go` – session cookie handling and the middlewares `RequireSession`, `RequireAdmin` and `Protect` (rejects cross-site POSTs).
 - `password/` – argon2id hashing and verification.
@@ -21,3 +23,38 @@ Flow: change a migration or query → run `sqlc generate` (see `backend/sqlc.yam
 
 Tables: `mfa_challenges` (half-finished logins, SHA-256 of the cookie token, attempt counter), `user_totp` (encrypted secret, `enabled_at`, `last_step` so each code works once), `recovery_codes` (SHA-256 only),
 `users` (argon2id hash, lowercase email, role), `invites` (single-use, only the SHA-256 of the code is stored), `sessions` (only the SHA-256 of the cookie token is stored, so a database leak does not leak logins).
+
+## Rate limiting
+
+Failed logins are counted in Redis (`deploy/charts/redis`, user `auth` limited to keys `rl:*`). This is layer 3 of three: Cloudflare blocks floods on the login paths at the edge, Traefik's `ratelimit` middleware caps every client at 10 requests/s (burst 20), and auth counts *failed* attempts, which only the application can see.
+
+| Key | Counts | Limit | Window |
+|---|---|---|---|
+| `rl:login:acctip:<sha256(email)>:<ip>` | failures for one account from one IP | 5 | 15 min |
+| `rl:login:ip:<ip>` | failures from one IP, any account (credential stuffing) | 20 | 15 min |
+| `rl:login:acct:<sha256(email)>` | failures for one account, any IP (distributed guessing) | 50 | 1 h |
+
+Flow in `POST /api/auth/login`:
+
+1. `Locked` reads the three counters (one pipeline: `GET` + `PTTL`). If one has reached its limit: `429 too_many_attempts` with `Retry-After` = the seconds left on that key. argon2id and the database are not touched.
+2. Wrong password (`ErrInvalidCredentials`): `Fail` runs `INCR` + `EXPIRE … NX` on all three keys in one `MULTI/EXEC`. The window starts at the first failure (fixed window) and is not extended by later ones.
+3. Complete login: `Reset` deletes the account+IP key. The IP and account counters stay, so one success can't hide a stuffing run.
+
+In `POST /api/auth/login/totp` the IP limit is checked first; a wrong code (`*CodeError`, which carries the account's email) counts on the same three keys. Starting a new challenge after 5 wrong codes therefore doesn't give an attacker who has the password more tries.
+
+Design points:
+
+- **The correct password is refused while locked.** Otherwise the lock would tell an attacker when they guessed right.
+- **Unknown emails are counted like real ones** (the key is the email string, not the user ID), so a lock never reveals whether an account exists. `Login` already does the same hashing work for both.
+- **No personal data in Redis:** emails are normalized and stored as SHA-256. Logs show IP, user ID and the rule that matched, never emails or passwords.
+- **Client IP:** `CF-Connecting-IP`, set by Cloudflare. It can be trusted because the Cloudflare Tunnel is the only way into the cluster (no open ports) and auth's NetworkPolicy admits only Traefik. Without a valid header the TCP peer is used. IPv6 addresses are grouped by /64, because one client usually owns a whole /64.
+- **Fail open:** if Redis is unreachable, the request goes through and a warning is logged (`rate limit unavailable`). Layers 1 and 2 still protect, and a Redis outage must not stop every login. The client never retries and gives up after 500 ms (dial) / 300 ms (commands). Redis is not part of `/readyz`.
+- **Off without `REDIS_ADDR`** (local development): a nil `*Limiter` allows everything.
+
+Unlock someone before the window ends (the IP is in the `login rate limited` log line):
+
+```bash
+k -n mycloud-dev exec deploy/auth -- /app unlock --email user@example.com --ip 203.0.113.7
+```
+
+Tests: `ratelimit_test.go` needs a throwaway Redis in `TEST_REDIS_ADDR` (it runs `FLUSHDB`); CI starts one next to Postgres. More commands: `Troubleshooting/rate_limiting.md`.

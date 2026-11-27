@@ -125,3 +125,18 @@ func TestVerifyOnlyOnInternalListener(t *testing.T) {
 		}
 	}
 }
+
+func TestNewLimiterOffWithoutRedis(t *testing.T) {
+	l, closeFn := newLimiter(func(string) string { return "" })
+	defer closeFn()
+	if l != nil {
+		t.Fatal("newLimiter without REDIS_ADDR returned a limiter, want nil")
+	}
+	l, closeFn = newLimiter(func(k string) string {
+		return map[string]string{"REDIS_ADDR": "127.0.0.1:6379", "REDIS_USER": "auth"}[k]
+	})
+	defer closeFn()
+	if l == nil {
+		t.Fatal("newLimiter with REDIS_ADDR returned nil")
+	}
+}

@@ -50,6 +50,14 @@ ingress:
 forwardAuth:
   provide: false
 
+# auth only: creates the Middleware "ratelimit", a token bucket per client IP (see README.md).
+rateLimit:
+  provide: false
+  average: 10              # requests per period, refill rate
+  period: 1s
+  burst: 20                # bucket size: short bursts above the average
+  sourceHeader: CF-Connecting-IP
+
 # Ingress NetworkPolicy: only the Traefik pods may reach ports http and internal (see README.md).
 networkPolicy:
   enabled: false

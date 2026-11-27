@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -53,6 +54,8 @@ func runCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.Writer
 		return createInvite(ctx, svc, args, stdout, stderr)
 	case "reset-2fa":
 		return reset2FA(ctx, svc, args, stdout, stderr)
+	case "unlock":
+		return unlock(ctx, args, stdout, stderr)
 	}
 	return fmt.Errorf("unknown command %q", cmd)
 }
@@ -131,5 +134,28 @@ func reset2FA(ctx context.Context, svc *auth.Service, args []string, stdout, std
 		return err
 	}
 	fmt.Fprintf(stdout, "2FA removed and sessions ended for %s (id %s)\n", u.Email, u.ID)
+	return nil
+}
+
+// unlock clears failed-login counters in Redis for a locked-out user (M4):
+//
+//	kubectl -n mycloud-dev exec deploy/auth -- /app unlock --email me@example.com --ip 203.0.113.7
+func unlock(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("unlock", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	email := fs.String("email", "", "email address of the account (required)")
+	ip := fs.String("ip", "", "client IP from the \"login rate limited\" log line (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" || fs.NArg() > 0 {
+		return errors.New("usage: unlock --email EMAIL [--ip IP]")
+	}
+	limiter, closeLimiter := newLimiter(os.Getenv)
+	defer closeLimiter()
+	if err := limiter.Unlock(ctx, *email, *ip); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "unlocked %s\n", *email)
 	return nil
 }

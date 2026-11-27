@@ -26,7 +26,7 @@ patches:
       value: cloud-dev.mohedine.dev
     - op: replace
       path: /metadata/annotations/traefik.ingress.kubernetes.io~1router.middlewares
-      value: mycloud-dev-strip-identity@kubernetescrd,mycloud-dev-forwardauth@kubernetescrd
+      value: mycloud-dev-ratelimit@kubernetescrd,mycloud-dev-strip-identity@kubernetescrd,mycloud-dev-forwardauth@kubernetescrd
   target:
     kind: Ingress
     name: api-protected

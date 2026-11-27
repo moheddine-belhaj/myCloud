@@ -44,6 +44,16 @@ type MFARequiredError struct {
 
 func (e *MFARequiredError) Error() string { return "two-factor code required" }
 
+// CodeError is ErrInvalidCode from LoginTOTP with the account's email, for the rate limiter.
+type CodeError struct {
+	Email string
+}
+
+func (e *CodeError) Error() string { return ErrInvalidCode.Error() }
+
+// Unwrap makes errors.Is(err, ErrInvalidCode) true.
+func (e *CodeError) Unwrap() error { return ErrInvalidCode }
+
 // recoveryCodeRe matches a normalized recovery code: 16 base32 characters.
 var recoveryCodeRe = regexp.MustCompile(`^[a-z2-7]{16}$`)
 
@@ -104,7 +114,11 @@ func (s *Service) LoginTOTP(ctx context.Context, challengeTok, code, userAgent s
 			}
 			slog.WarnContext(ctx, "2fa challenge used up", "user_id", ch.UserID, "attempts", ch.Attempts)
 		}
-		return Session{}, ErrInvalidCode
+		u, err := s.q.GetUserByID(ctx, ch.UserID)
+		if err != nil {
+			return Session{}, ErrInvalidCode
+		}
+		return Session{}, &CodeError{Email: u.Email}
 	}
 	if err != nil {
 		return Session{}, err

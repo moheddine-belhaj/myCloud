@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/moheddine-belhaj/mycloud/backend/internal/auth/password"
@@ -18,12 +20,19 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 
 // Handler serves the auth HTTP API under /api/auth/.
 type Handler struct {
-	svc *Service
+	svc     *Service
+	limiter *Limiter
 }
 
 // NewHandler returns the HTTP layer for svc.
 func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// WithLimiter turns on failed-login rate limiting (M4); nil keeps it off.
+func (h *Handler) WithLimiter(l *Limiter) *Handler {
+	h.limiter = l
+	return h
 }
 
 // Routes registers the API routes on mux.
@@ -84,10 +93,15 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	ip := ClientIP(r)
+	if h.rateLimited(w, r, req.Email, ip) {
+		return
+	}
 	s, err := h.svc.Login(r.Context(), req.Email, req.Password, r.UserAgent())
 	var mfa *MFARequiredError
 	switch {
 	case err == nil:
+		h.resetFailures(r, req.Email, ip)
 		setSessionCookie(w, s)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusNoContent)
@@ -97,6 +111,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		setMFACookie(w, mfa.Challenge)
 		writeJSON(w, http.StatusOK, loginResponse{MFARequired: true})
 	case errors.Is(err, ErrInvalidCredentials):
+		h.countFailure(r, req.Email, ip)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Wrong email or password.")
 	default:
 		internalError(w, r, err)
@@ -117,13 +132,22 @@ func (h *Handler) loginTOTP(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	ip := ClientIP(r)
+	if h.rateLimited(w, r, "", ip) {
+		return
+	}
 	s, err := h.svc.LoginTOTP(r.Context(), mfaToken(r), req.Code, r.UserAgent())
+	var codeErr *CodeError
 	switch {
 	case err == nil:
+		h.resetFailures(r, s.User.Email, ip)
 		clearMFACookie(w)
 		setSessionCookie(w, s)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusNoContent)
+	case errors.As(err, &codeErr):
+		h.countFailure(r, codeErr.Email, ip)
+		writeError(w, http.StatusBadRequest, "invalid_code", "The code is wrong, expired or already used.")
 	case errors.Is(err, ErrInvalidCode):
 		writeError(w, http.StatusBadRequest, "invalid_code", "The code is wrong, expired or already used.")
 	case errors.Is(err, ErrNoChallenge):
@@ -331,4 +355,37 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// rateLimited answers 429 with Retry-After when the caller is locked out.
+// If Redis is unreachable the request goes through (fail open, see README.md#rate-limiting).
+func (h *Handler) rateLimited(w http.ResponseWriter, r *http.Request, email, ip string) bool {
+	wait, rule, err := h.limiter.Locked(r.Context(), email, ip)
+	if err != nil {
+		slog.WarnContext(r.Context(), "rate limit unavailable, allowing request", "err", err)
+		return false
+	}
+	if wait <= 0 {
+		return false
+	}
+	secs := int(math.Ceil(wait.Seconds()))
+	slog.WarnContext(r.Context(), "login rate limited", "ip", ip, "rule", rule, "retry_after_s", secs)
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	writeError(w, http.StatusTooManyRequests, "too_many_attempts",
+		fmt.Sprintf("Too many failed attempts. Try again in %d minutes.", int(math.Ceil(float64(secs)/60))))
+	return true
+}
+
+// countFailure records a failed password or code; Redis errors are only logged.
+func (h *Handler) countFailure(r *http.Request, email, ip string) {
+	if err := h.limiter.Fail(r.Context(), email, ip); err != nil {
+		slog.WarnContext(r.Context(), "rate limit unavailable, failure not counted", "err", err)
+	}
+}
+
+// resetFailures clears the account+IP counter after a complete login.
+func (h *Handler) resetFailures(r *http.Request, email, ip string) {
+	if err := h.limiter.Reset(r.Context(), email, ip); err != nil {
+		slog.WarnContext(r.Context(), "rate limit unavailable, counter not reset", "err", err)
+	}
 }

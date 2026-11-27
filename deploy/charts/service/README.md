@@ -34,8 +34,9 @@ The auth release creates two Middlewares; any Ingress in the same namespace can 
 |---|---|
 | `strip-identity` | deletes client-sent `X-User-Id` / `X-User-Role` (a header set to `""` is removed by Traefik) |
 | `forwardauth` | asks `http://auth.<ns>.svc.cluster.local:8081/verify` first; on `200` copies `X-User-Id` / `X-User-Role` onto the request, otherwise returns auth's `401`/`403` to the client |
+| `ratelimit` | token bucket per client IP (`CF-Connecting-IP`): `average` requests per `period` with bursts up to `burst`; above that Traefik answers `429` (values `rateLimit.*`, created with `rateLimit.provide`) |
 
-Order matters: `strip-identity` first, then `forwardauth`. Public routes (auth's login, register) use only `strip-identity`. How a service reads the headers: `backend/internal/identity/README.md`.
+Order matters: `ratelimit` first (floods never reach ForwardAuth's database lookup), then `strip-identity`, then `forwardauth`. Public routes (auth's login, register) use `ratelimit` and `strip-identity`. Traefik's buckets live in memory: they reset when Traefik restarts, which is fine for a flood limit. How a service reads the headers: `backend/internal/identity/README.md`.
 
 ## Layered values (last wins)
 
