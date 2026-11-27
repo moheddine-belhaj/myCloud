@@ -1,6 +1,6 @@
 {{- /*
-Traefik Middlewares for M4 ForwardAuth, rendered by the auth release only
-(forwardAuth.provide). Any Ingress in the namespace can use them. See README.md.
+Traefik Middlewares for M4, rendered by the auth release only (forwardAuth.provide,
+rateLimit.provide). Any Ingress in the namespace can use them. See README.md.
 */ -}}
 {{- if .Values.forwardAuth.provide }}
 {{- if not .Values.internalPort }}
@@ -30,4 +30,20 @@ spec:
     customRequestHeaders:
       X-User-Id: ""
       X-User-Role: ""
+{{- end }}
+{{- if .Values.rateLimit.provide }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ratelimit
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+spec:
+  rateLimit:
+    average: {{ .Values.rateLimit.average }}
+    period: {{ .Values.rateLimit.period }}
+    burst: {{ .Values.rateLimit.burst }}
+    sourceCriterion:
+      requestHeaderName: {{ .Values.rateLimit.sourceHeader }}
 {{- end }}

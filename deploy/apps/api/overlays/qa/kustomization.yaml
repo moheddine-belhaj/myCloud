@@ -26,7 +26,7 @@ patches:
       value: cloud-qa.mohedine.dev
     - op: replace
       path: /metadata/annotations/traefik.ingress.kubernetes.io~1router.middlewares
-      value: mycloud-qa-strip-identity@kubernetescrd,mycloud-qa-forwardauth@kubernetescrd
+      value: mycloud-qa-ratelimit@kubernetescrd,mycloud-qa-strip-identity@kubernetescrd,mycloud-qa-forwardauth@kubernetescrd
   target:
     kind: Ingress
     name: api-protected

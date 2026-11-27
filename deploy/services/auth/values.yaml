@@ -13,23 +13,34 @@ database:
 ingress:
   enabled: true
   path: /api/auth
-  middlewares: [strip-identity]   # no forwardauth: login and register work without a session
+  middlewares: [ratelimit, strip-identity]   # no forwardauth: login and register work without a session
 
 # M4: ForwardAuth endpoint GET /verify for Traefik, on its own port.
 # In the cluster: http://auth.mycloud-<env>.svc.cluster.local:8081/verify
 internalPort: 8081
 
-# M4: auth creates the forwardauth and strip-identity Middlewares for its namespace.
+# M4: auth creates the forwardauth, strip-identity and ratelimit Middlewares for its namespace.
 forwardAuth:
   provide: true
+rateLimit:
+  provide: true
+
+# M4: failed-login counters in Redis (deploy/data/redis), user "auth" with an ACL.
+env:
+  REDIS_ADDR: redis:6379
+  REDIS_USER: auth
 
 # M3: AES-256 key that encrypts TOTP seeds, from Vault (secret/mycloud/<env>/auth-totp, key "key").
 externalSecrets:
   - name: auth-totp
     vaultPath: "mycloud/{{ .Values.environment }}/auth-totp"
     keys: [key]
+  - name: auth-redis                # same Vault entry as the Redis ACL (PR 3)
+    vaultPath: "mycloud/{{ .Values.environment }}/redis"
+    keys: [password]
 secretEnv:
   TOTP_KEY: { secret: auth-totp, key: key }
+  REDIS_PASSWORD: { secret: auth-redis, key: password }
   
 # argon2id needs ~19 MiB per hash (PR 2); allow 4 parallel hashes plus headroom.
 resources:
