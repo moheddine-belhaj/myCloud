@@ -51,6 +51,9 @@ export DATABASE_URL="$TEST_DATABASE_URL"
 # local TOTP key: created once, kept in a file so it stays the same across restarts
 [ -f ~/.mycloud-local-totp-key ] || (umask 077; openssl rand -base64 32 > ~/.mycloud-local-totp-key)
 export TOTP_KEY=$(cat ~/.mycloud-local-totp-key)
+# optional, M4 rate limiting: a throwaway Redis for the tests (and the server)
+# docker run -d --name redis-test -p 56379:6379 redis:8.2-alpine
+# export TEST_REDIS_ADDR=localhost:56379 REDIS_ADDR=localhost:56379
 ```
 
 | Variable | Used by | Note |
@@ -58,6 +61,8 @@ export TOTP_KEY=$(cat ~/.mycloud-local-totp-key)
 | `TEST_DATABASE_URL` | `go test` | Each test creates and drops its own database on this server |
 | `DATABASE_URL` | the server and the CLI | Uses the `app` database |
 | `TOTP_KEY` | the server | Must not change while 2FA users exist, or their secrets can't be decrypted |
+| `TEST_REDIS_ADDR` | `go test` (optional) | Rate-limit tests; they run `FLUSHDB`, so never point it at a real Redis. Unset: those tests skip |
+| `REDIS_ADDR` | the server (optional) | Unset: rate limiting is off and the server logs a warning |
 
 Set these in every new terminal.
 
